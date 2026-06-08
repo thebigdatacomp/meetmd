@@ -202,6 +202,23 @@ final class AppController: NSObject, NSApplicationDelegate {
         settingsController?.show()
     }
 
+    @objc private func openAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "MeetMD"
+        alert.informativeText = """
+        Captura suas reuniões e gera a transcrição em Markdown, organizada por \
+        projeto e pronta para o Claude processar.
+
+        A transcrição é feita localmente (whisper.cpp) — o áudio não sai da sua \
+        máquina. Reuniões do Google Meet no Safari são detectadas \
+        automaticamente; ou grave manualmente pelo menu.
+        """
+        alert.icon = NSImage(systemSymbolName: "mic.circle.fill", accessibilityDescription: "MeetMD")
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     @objc private func quit() { NSApp.terminate(nil) }
 
     // promptStartInput asks for a title and project before a manual recording.
@@ -248,21 +265,22 @@ final class AppController: NSObject, NSApplicationDelegate {
         if online {
             switch state {
             case .idle:
-                menu.addItem(item("Iniciar gravação", #selector(startManual), "r"))
+                menu.addItem(item("Iniciar gravação", #selector(startManual), "r", "record.circle"))
             case .recording:
-                menu.addItem(item("Pausar", #selector(pause), "p"))
-                menu.addItem(item("Parar e salvar", #selector(stop), "s"))
+                menu.addItem(item("Pausar", #selector(pause), "p", "pause.circle"))
+                menu.addItem(item("Parar e salvar", #selector(stop), "s", "stop.circle"))
             case .paused:
-                menu.addItem(item("Retomar", #selector(resume), "p"))
-                menu.addItem(item("Parar e salvar", #selector(stop), "s"))
+                menu.addItem(item("Retomar", #selector(resume), "p", "play.circle"))
+                menu.addItem(item("Parar e salvar", #selector(stop), "s", "stop.circle"))
             case .processing:
                 break // transcrevendo — sem ações
             }
-            menu.addItem(item("Abrir pasta dos arquivos", #selector(openFolder), "f"))
-            menu.addItem(item("Configurações…", #selector(openSettings), ","))
+            menu.addItem(item("Abrir pasta dos arquivos", #selector(openFolder), "f", "folder"))
+            menu.addItem(item("Configurações…", #selector(openSettings), ",", "gearshape"))
         }
         menu.addItem(.separator())
-        menu.addItem(item("Sair", #selector(quit), "q"))
+        menu.addItem(item("Sobre o MeetMD", #selector(openAbout), "", "info.circle"))
+        menu.addItem(item("Sair", #selector(quit), "q", "power"))
         statusItem.menu = menu
     }
 
@@ -280,9 +298,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         title.isEmpty ? "sem título" : title
     }
 
-    private func item(_ title: String, _ selector: Selector, _ key: String) -> NSMenuItem {
+    private func item(_ title: String, _ selector: Selector, _ key: String, _ symbol: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
         item.target = self
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
         return item
     }
 
