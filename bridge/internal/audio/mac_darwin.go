@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+
+	"github.com/thebigdatacomp/meetmd/internal/config"
 )
 
 // helperName is the ScreenCaptureKit recorder binary (built from
@@ -25,7 +27,8 @@ const minUsableWav = 1024
 // Start launches it (recording until signalled), Stop sends SIGTERM so it
 // finalizes the WAV, Cancel kills it and discards the file.
 type macCapturer struct {
-	opts Options
+	store   *config.Store
+	workDir string
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
@@ -33,8 +36,8 @@ type macCapturer struct {
 	micPath string
 }
 
-func newMacCapturer(opts Options) *macCapturer {
-	return &macCapturer{opts: opts}
+func newMacCapturer(store *config.Store) *macCapturer {
+	return &macCapturer{store: store, workDir: filepath.Join(os.TempDir(), "meetmd")}
 }
 
 func (c *macCapturer) Start(_ context.Context, sessionID string) error {
@@ -43,19 +46,20 @@ func (c *macCapturer) Start(_ context.Context, sessionID string) error {
 	if c.cmd != nil {
 		return errors.New("capture already running")
 	}
-	helper, err := c.resolveHelper()
+	audioCfg := c.store.Get().Audio // live config (helper path, mic) at each Start
+	helper, err := resolveHelper(audioCfg.MacHelperPath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(c.opts.WorkDir, 0o755); err != nil {
+	if err := os.MkdirAll(c.workDir, 0o755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
-	wav := filepath.Join(c.opts.WorkDir, sessionID+".wav")
+	wav := filepath.Join(c.workDir, sessionID+".wav")
 	args := []string{wav} // no duration arg → record until signalled
 
 	mic := ""
-	if c.opts.CaptureMic {
-		mic = filepath.Join(c.opts.WorkDir, sessionID+".mic.wav")
+	if audioCfg.CaptureMic {
+		mic = filepath.Join(c.workDir, sessionID+".mic.wav")
 		args = append(args, "--mic", mic)
 	}
 
@@ -135,13 +139,14 @@ func (c *macCapturer) Cancel() error {
 	return nil
 }
 
-// resolveHelper locates the capture helper binary.
-func (c *macCapturer) resolveHelper() (string, error) {
-	if c.opts.HelperPath != "" {
-		if _, err := os.Stat(c.opts.HelperPath); err != nil {
-			return "", fmt.Errorf("audio helper not found at %s: %w", c.opts.HelperPath, err)
+// resolveHelper locates the capture helper binary from a configured path,
+// falling back to PATH.
+func resolveHelper(configured string) (string, error) {
+	if configured != "" {
+		if _, err := os.Stat(configured); err != nil {
+			return "", fmt.Errorf("audio helper not found at %s: %w", configured, err)
 		}
-		return c.opts.HelperPath, nil
+		return configured, nil
 	}
 	if p, err := exec.LookPath(helperName); err == nil {
 		return p, nil

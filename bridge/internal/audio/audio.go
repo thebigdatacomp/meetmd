@@ -13,14 +13,6 @@ import (
 // capturer yet (Windows/Linux). macOS is implemented in mac_darwin.go.
 var ErrNotImplemented = errors.New("audio capture not implemented on this platform yet")
 
-// Options configures a platform Capturer. NewCapturer (build-tagged per OS)
-// consumes it.
-type Options struct {
-	HelperPath string // path to the OS capture helper binary (empty = look up in PATH)
-	WorkDir    string // directory for temporary WAV files
-	CaptureMic bool   // also capture the user's mic as a second channel
-}
-
 // Recording is the result of a finished capture. MicWav is empty when the mic
 // was not captured (or captured nothing usable).
 type Recording struct {

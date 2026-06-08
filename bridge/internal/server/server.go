@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thebigdatacomp/meetmd/internal/config"
 	"github.com/thebigdatacomp/meetmd/internal/session"
 )
 
@@ -29,12 +30,13 @@ const (
 
 // Server wires the session manager to HTTP routes.
 type Server struct {
-	mgr *session.Manager
+	mgr   *session.Manager
+	store *config.Store
 }
 
-// New builds a Server backed by the given manager.
-func New(mgr *session.Manager) *Server {
-	return &Server{mgr: mgr}
+// New builds a Server backed by the given manager and config store.
+func New(mgr *session.Manager, store *config.Store) *Server {
+	return &Server{mgr: mgr, store: store}
 }
 
 // Handler returns the configured HTTP handler (exported for testing).
@@ -44,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/sessions/start", s.handleStart)
 	mux.HandleFunc(sessionPrefix, s.handleSessionByID) // /sessions/{id}/{action}
+	mux.HandleFunc("/settings", s.handleSettings)      // GET/PUT user-facing settings
 	mux.Handle("/", uiServer())                        // control panel (least specific)
 	return mux
 }

@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/thebigdatacomp/meetmd/internal/audio"
 	"github.com/thebigdatacomp/meetmd/internal/config"
@@ -85,12 +83,9 @@ func runServe() {
 		log.Printf("config recarregado")
 	})
 
-	// Real OS audio capture (macOS via ScreenCaptureKit; Stub elsewhere).
-	capturer := audio.NewCapturer(audio.Options{
-		HelperPath: cfg.Audio.MacHelperPath,
-		WorkDir:    filepath.Join(os.TempDir(), "meetmd"),
-		CaptureMic: cfg.Audio.CaptureMic,
-	})
+	// Real OS audio capture (macOS via ScreenCaptureKit; Stub elsewhere). Reads
+	// helper path + mic setting live from the store at each Start.
+	capturer := audio.NewCapturer(store)
 
 	// Transcriber is built per recording from the live config, so model/language/
 	// VAD changes take effect without a restart. Falls back to an empty
@@ -114,16 +109,11 @@ func runServe() {
 
 	mgr := session.New(store, capturer, newTranscriber)
 
-	// Auto-detect meetings in the browser (macOS/Safari) and drive start/stop.
-	if cfg.AutoDetect.Enabled {
-		detect.Start(context.Background(), mgr, detect.Options{
-			Project:  cfg.AutoDetect.Project,
-			Interval: time.Duration(cfg.AutoDetect.IntervalSeconds) * time.Second,
-			Mode:     cfg.AutoDetect.Mode,
-		})
-	}
+	// Auto-detect meetings (macOS/Safari). Always runs; reads auto_detect from
+	// the live store each tick, so enabled/mode/project are hot-reloadable.
+	detect.Start(context.Background(), mgr, store)
 
-	srv := server.New(mgr)
+	srv := server.New(mgr, store)
 
 	log.Printf("MeetMD bridge listening on 127.0.0.1:%d", cfg.Port)
 	log.Printf("output root: %s", cfg.OutputRoot)

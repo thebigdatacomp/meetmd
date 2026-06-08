@@ -23,7 +23,7 @@ const meetCodeSample = "abc-defg-hij"
 
 func TestReconcileAskSurfacesDetection(t *testing.T) {
 	mgr := newManager(t)
-	reconcile(context.Background(), mgr, Options{Mode: ModeAsk, Project: "bora"}, meetCodeSample, "Daily")
+	reconcile(context.Background(), mgr, "bora", ModeAsk, meetCodeSample, "Daily")
 
 	st := mgr.Status()
 	if st.State != session.StateIdle {
@@ -37,13 +37,11 @@ func TestReconcileAskSurfacesDetection(t *testing.T) {
 func TestReconcileAutoStartsAndStops(t *testing.T) {
 	mgr := newManager(t)
 	ctx := context.Background()
-	opts := Options{Mode: ModeAuto, Project: "bora"}
-
-	reconcile(ctx, mgr, opts, meetCodeSample, "Daily")
+	reconcile(ctx, mgr, "bora", ModeAuto, meetCodeSample, "Daily")
 	if mgr.Status().State != session.StateRecording {
 		t.Fatalf("auto mode should start recording")
 	}
-	reconcile(ctx, mgr, opts, "", "") // meeting tab gone
+	reconcile(ctx, mgr, "bora", ModeAuto, "", "") // meeting tab gone
 	if mgr.Status().State != session.StateIdle {
 		t.Errorf("auto mode should stop when the meeting ends")
 	}
@@ -55,7 +53,7 @@ func TestReconcileDoesNotStopManualRecording(t *testing.T) {
 	if _, err := mgr.Start(ctx, session.StartRequest{Title: "Solo", Platform: model.PlatformManual}); err != nil {
 		t.Fatal(err)
 	}
-	reconcile(ctx, mgr, Options{Mode: ModeAsk}, "", "") // no Meet tab
+	reconcile(ctx, mgr, "", ModeAsk, "", "") // no Meet tab
 	if mgr.Status().State != session.StateRecording {
 		t.Errorf("manual recording must not be auto-stopped by the detector")
 	}

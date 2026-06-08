@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thebigdatacomp/meetmd/internal/config"
 	"github.com/thebigdatacomp/meetmd/internal/model"
 	"github.com/thebigdatacomp/meetmd/internal/session"
 )
@@ -34,21 +35,21 @@ const safariScript = `tell application "Safari"
 	return ""
 end tell`
 
-// Start launches the Safari meeting detector in a background goroutine.
-func Start(ctx context.Context, mgr *session.Manager, opts Options) {
-	if opts.Interval <= 0 {
-		opts.Interval = defaultInterval
+// Start launches the Safari meeting detector in a background goroutine. It runs
+// regardless of the enabled flag and reads auto_detect settings live from the
+// store each tick, so toggling detection on/off applies without a restart.
+func Start(ctx context.Context, mgr *session.Manager, store *config.Store) {
+	interval := time.Duration(store.Get().AutoDetect.IntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = defaultInterval
 	}
-	if opts.Mode == "" {
-		opts.Mode = ModeAsk
-	}
-	go loop(ctx, mgr, opts)
+	go loop(ctx, mgr, store, interval)
 }
 
-func loop(ctx context.Context, mgr *session.Manager, opts Options) {
-	ticker := time.NewTicker(opts.Interval)
+func loop(ctx context.Context, mgr *session.Manager, store *config.Store, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	log.Printf("auto-detect (Safari) ativo: modo=%s, a cada %s", opts.Mode, opts.Interval)
+	log.Printf("auto-detect (Safari) ativo a cada %s", interval)
 
 	warned := false
 	for {
@@ -56,6 +57,11 @@ func loop(ctx context.Context, mgr *session.Manager, opts Options) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			ad := store.Get().AutoDetect
+			if !ad.Enabled {
+				mgr.ClearDetected()
+				continue
+			}
 			code, title, err := detectMeet()
 			if err != nil {
 				if !warned {
@@ -65,7 +71,7 @@ func loop(ctx context.Context, mgr *session.Manager, opts Options) {
 				continue
 			}
 			warned = false
-			reconcile(ctx, mgr, opts, code, title)
+			reconcile(ctx, mgr, ad.Project, ad.Mode, code, title)
 		}
 	}
 }
@@ -77,7 +83,7 @@ func loop(ctx context.Context, mgr *session.Manager, opts Options) {
 //
 // Auto-stop keys off the recording's platform (google-meet), so manual
 // recordings are never touched.
-func reconcile(ctx context.Context, mgr *session.Manager, opts Options, code, title string) {
+func reconcile(ctx context.Context, mgr *session.Manager, project, mode, code, title string) {
 	st := mgr.Status()
 	recording := st.State == session.StateRecording || st.State == session.StatePaused
 	meetRecording := recording && st.Meeting != nil && st.Meeting.Platform == model.PlatformGoogleMeet
@@ -99,10 +105,10 @@ func reconcile(ctx context.Context, mgr *session.Manager, opts Options, code, ti
 		return
 	}
 
-	if opts.Mode == ModeAuto {
+	if mode == ModeAuto {
 		if _, err := mgr.Start(ctx, session.StartRequest{
 			Title:    title,
-			Project:  opts.Project,
+			Project:  project,
 			Platform: model.PlatformGoogleMeet,
 		}); err != nil {
 			log.Printf("auto-start falhou: %v", err)
@@ -111,7 +117,7 @@ func reconcile(ctx context.Context, mgr *session.Manager, opts Options, code, ti
 		}
 		return
 	}
-	mgr.SetDetected(code, title) // ModeAsk: let the UI prompt
+	mgr.SetDetected(code, title) // ModeAsk (default): let the UI prompt
 }
 
 func detectMeet() (code, title string, err error) {

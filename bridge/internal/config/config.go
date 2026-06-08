@@ -116,6 +116,20 @@ func (c *Config) applyDefaults() {
 	}
 }
 
+// Save writes the config to DefaultPath() as YAML, creating the directory if
+// needed. Note: this replaces any hand-written comments in the file.
+func Save(cfg Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	path := DefaultPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
 // DefaultPath returns the expected config file location.
 func DefaultPath() string {
 	return filepath.Join(homeDir(), configDirName, configFileName)
