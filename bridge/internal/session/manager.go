@@ -310,17 +310,35 @@ func (m *Manager) transcribeRecording(ctx context.Context, rec audio.Recording, 
 		{rec.MicWav, model.SpeakerYou},
 	}
 
-	var segments []model.Segment
-	for _, ch := range channels {
+	// Transcribe both channels concurrently — each whisper run is the slow part,
+	// so this ~halves wall time when both channels have audio.
+	results := make([][]model.Segment, len(channels))
+	errs := make([]error, len(channels))
+	var wg sync.WaitGroup
+	for i, ch := range channels {
 		if ch.wav == "" {
 			continue
 		}
-		segs, err := m.transcriber.Transcribe(ctx, ch.wav)
-		if err != nil {
-			return nil, err
-		}
-		for i := range segs {
-			segs[i].Speaker = ch.speaker
+		wg.Add(1)
+		go func(i int, wav string, speaker model.Speaker) {
+			defer wg.Done()
+			segs, err := m.transcriber.Transcribe(ctx, wav)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			for j := range segs {
+				segs[j].Speaker = speaker
+			}
+			results[i] = segs
+		}(i, ch.wav, ch.speaker)
+	}
+	wg.Wait()
+
+	var segments []model.Segment
+	for i, segs := range results {
+		if errs[i] != nil {
+			return nil, errs[i]
 		}
 		segments = append(segments, segs...)
 	}
