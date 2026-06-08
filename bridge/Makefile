@@ -13,8 +13,11 @@ LDFLAGS := -linkmode=external
 build:
 	go build -ldflags=$(LDFLAGS) -o $(BINARY) $(PKG)
 
-run:
-	go run -ldflags=$(LDFLAGS) $(PKG)
+# run builds and launches the STABLE binary (bin/meetmd) rather than `go run`,
+# whose ephemeral, changing path breaks macOS TCC permissions (Automation,
+# Screen Recording) — granted once to bin/meetmd, they persist across runs.
+run: build
+	./$(BINARY) serve
 
 test:
 	go test ./...
