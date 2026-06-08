@@ -43,13 +43,30 @@ async function bridge(path, options) {
   return res.json();
 }
 
-async function health() {
+// syncedState reconciles local state with the bridge's /status (the source of
+// truth), so the badge/popup stay accurate even when the CLI started or stopped
+// the session. Returns the authoritative state plus whether the bridge is up.
+async function syncedState() {
+  let status;
   try {
-    await bridge("/health", { method: "GET" });
-    return true;
+    status = await bridge("/status", { method: "GET" });
   } catch (_) {
-    return false;
+    return { state: await getState(), online: false };
   }
+
+  const recording = status.state === "recording";
+  const meeting = status.meeting || {};
+  const next = {
+    recording,
+    sessionId: recording ? meeting.ID || null : null,
+    title: recording ? meeting.Title || "" : "",
+  };
+
+  const local = await getState();
+  if (next.recording !== local.recording || next.sessionId !== local.sessionId) {
+    await setState(next); // also refreshes the badge
+  }
+  return { state: next, online: true };
 }
 
 async function startRecording(meeting) {
@@ -102,7 +119,10 @@ const HANDLERS = {
     await cancelRecording();
     return {};
   },
-  [MEETMD_MSG.STATUS]: async () => ({ state: await getState(), health: await health() }),
+  [MEETMD_MSG.STATUS]: async () => {
+    const { state, online } = await syncedState();
+    return { state, health: online };
+  },
 };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

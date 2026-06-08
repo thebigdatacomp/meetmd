@@ -1,8 +1,14 @@
-// Command meetmd runs the MeetMD bridge: a local daemon that captures meeting
-// audio, transcribes it, and writes structured Markdown for Claude to process.
+// Command meetmd is the MeetMD bridge and its CLI client.
+//
+//	meetmd serve            run the bridge daemon (default)
+//	meetmd start [título]   start a recording on the running bridge
+//	meetmd stop             stop the active recording and write the .md
+//	meetmd status           show the bridge state
+//	meetmd cancel           abort the active recording
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,6 +21,41 @@ import (
 )
 
 func main() {
+	cmd := "serve"
+	if len(os.Args) > 1 {
+		cmd = os.Args[1]
+	}
+	switch cmd {
+	case "serve":
+		runServe()
+	case "start":
+		runStart(os.Args[2:])
+	case "stop":
+		runStop()
+	case "status":
+		runStatus()
+	case "cancel":
+		runCancel()
+	case "-h", "--help", "help":
+		fmt.Print(usage)
+	default:
+		fmt.Fprintf(os.Stderr, "comando desconhecido: %s\n\n%s", cmd, usage)
+		os.Exit(2)
+	}
+}
+
+const usage = `MeetMD — captura reuniões em Markdown estruturado.
+
+Uso:
+  meetmd serve            inicia o bridge (daemon)
+  meetmd start [título]   inicia uma gravação
+  meetmd stop             para a gravação e grava os .md
+  meetmd status           mostra o estado do bridge
+  meetmd cancel           aborta a gravação atual
+`
+
+// runServe starts the bridge daemon.
+func runServe() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)

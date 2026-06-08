@@ -21,6 +21,8 @@ popup            --(START/STOP/CANCEL/STATUS)-->
 
 O content script só observa o DOM e manda mensagens; o service worker (que tem `host_permissions` pro `127.0.0.1`) faz as chamadas HTTP. A sessão fica em `chrome.storage.local` porque o SW do MV3 é efêmero.
 
+**Coexiste com o CLI:** a extensão e o CLI (`meetmd start/stop`) são clientes do mesmo bridge, que tem uma única sessão ativa. O popup lê o `/status` do bridge como verdade e reconcilia o estado local — então iniciar pelo CLI e parar pelo popup (ou vice-versa) funciona; o badge sincroniza ao abrir o popup.
+
 ## Carregar (dev)
 
 1. Suba o bridge: `cd ../bridge && make run`
