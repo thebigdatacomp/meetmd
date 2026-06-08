@@ -35,9 +35,14 @@ private enum Output {
 @available(macOS 13.0, *)
 final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let outputURL: URL
+    private let micURL: URL? // when set, the mic is captured to a second channel
     private var stream: SCStream?
     private var audioFile: AVAudioFile?
     private var samplesWritten: AVAudioFramePosition = 0
+
+    // Mic capture (the user's own voice, which never reaches system output).
+    private var engine: AVAudioEngine?
+    private var micFile: AVAudioFile?
 
     // paused is read on the audio queue and written from signal handlers, so it
     // is guarded by a lock. While paused, samples are dropped, which keeps the
@@ -49,8 +54,9 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         set { lock.lock(); pausedFlag = newValue; lock.unlock() }
     }
 
-    init(outputURL: URL) {
+    init(outputURL: URL, micURL: URL?) {
         self.outputURL = outputURL
+        self.micURL = micURL
     }
 
     func start() async throws {
@@ -75,11 +81,60 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
         try await stream.startCapture()
         self.stream = stream
+
+        // Mic failure (e.g. no permission) must not abort the system capture.
+        do {
+            try startMic()
+        } catch {
+            FileHandle.standardError.write("mic indisponível: \(error)\n".data(using: .utf8)!)
+        }
+    }
+
+    // startMic taps the default input device and writes it, resampled to 16kHz
+    // mono, to a separate WAV. The same `paused` flag drops mic samples too.
+    private func startMic() throws {
+        guard let micURL = micURL else { return }
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+        guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                         sampleRate: Output.sampleRate,
+                                         channels: Output.channels,
+                                         interleaved: false),
+              let converter = AVAudioConverter(from: inputFormat, to: target) else {
+            throw RecorderError.micUnavailable
+        }
+        let file = try AVAudioFile(forWriting: micURL, settings: Output.settings)
+
+        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            guard let self = self, !self.paused else { return }
+            let ratio = target.sampleRate / inputFormat.sampleRate
+            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
+            guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
+            var fed = false
+            var convError: NSError?
+            converter.convert(to: out, error: &convError) { _, status in
+                if fed { status.pointee = .noDataNow; return nil }
+                fed = true
+                status.pointee = .haveData
+                return buffer
+            }
+            if convError == nil, out.frameLength > 0 {
+                try? file.write(from: out)
+            }
+        }
+        try engine.start()
+        self.engine = engine
+        self.micFile = file
     }
 
     func stop() async throws {
         try await stream?.stopCapture()
         audioFile = nil // flush/close
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
+        micFile = nil
     }
 
     // SCStreamOutput: receives audio sample buffers.
@@ -104,7 +159,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var seconds: Double { Double(samplesWritten) / Output.sampleRate }
 
-    enum RecorderError: Error { case noDisplay }
+    enum RecorderError: Error { case noDisplay, micUnavailable }
 }
 
 // CMSampleBuffer → AVAudioPCMBuffer (float32) for AVAudioFile to convert on write.
@@ -131,20 +186,35 @@ func fail(_ message: String) -> Never {
 }
 
 // Usage:
-//   system-audio-recorder <output.wav>            → record until SIGTERM/SIGINT
-//   system-audio-recorder <output.wav> <seconds>  → record for a fixed time (spike/testing)
-let args = CommandLine.arguments
-guard args.count >= 2 else {
-    fail("usage: system-audio-recorder <output.wav> [seconds]")
+//   system-audio-recorder <output.wav> [seconds] [--mic <mic.wav>]
+//     no seconds → record until SIGTERM/SIGINT; --mic also captures the mic.
+var positional: [String] = []
+var micPath: String?
+do {
+    let argv = CommandLine.arguments
+    var i = 1
+    while i < argv.count {
+        if argv[i] == "--mic", i + 1 < argv.count {
+            micPath = argv[i + 1]
+            i += 2
+        } else {
+            positional.append(argv[i])
+            i += 1
+        }
+    }
 }
-let outputURL = URL(fileURLWithPath: args[1])
-let duration = args.count >= 3 ? (Double(args[2]) ?? 0) : 0 // 0 = until signal
+guard let outPath = positional.first else {
+    fail("usage: system-audio-recorder <output.wav> [seconds] [--mic <mic.wav>]")
+}
+let outputURL = URL(fileURLWithPath: outPath)
+let micURL = micPath.map { URL(fileURLWithPath: $0) }
+let duration = positional.count >= 2 ? (Double(positional[1]) ?? 0) : 0 // 0 = until signal
 
 guard #available(macOS 13.0, *) else {
     fail("ScreenCaptureKit audio capture requires macOS 13+")
 }
 
-let recorder = SystemAudioRecorder(outputURL: outputURL)
+let recorder = SystemAudioRecorder(outputURL: outputURL, micURL: micURL)
 
 @Sendable func stopAndExit() {
     Task {

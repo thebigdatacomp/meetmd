@@ -72,13 +72,11 @@ func parseWhisperJSON(data []byte) ([]model.Segment, error) {
 		if text == "" {
 			continue
 		}
+		// Speaker is left unset here; the caller labels each channel
+		// (system = participants, mic = you) when merging.
 		segs = append(segs, model.Segment{
 			Start: time.Duration(t.Offsets.From) * time.Millisecond,
-			// We currently capture only the system output (everyone you hear),
-			// so all speech is attributed to participants. Separate mic capture
-			// + diarization ("you vs. others") is future work.
-			Speaker: model.SpeakerOthers,
-			Text:    text,
+			Text:  text,
 		})
 	}
 	return segs, nil

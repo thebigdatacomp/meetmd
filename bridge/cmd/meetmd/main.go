@@ -81,6 +81,7 @@ func runServe() {
 	capturer := audio.NewCapturer(audio.Options{
 		HelperPath: cfg.Audio.MacHelperPath,
 		WorkDir:    filepath.Join(os.TempDir(), "meetmd"),
+		CaptureMic: cfg.Audio.CaptureMic,
 	})
 
 	// Local whisper.cpp transcription (falls back to an empty transcript if the

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -132,8 +133,8 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 	}
 	meeting.EndedAt = m.now()
 
-	wavPath, capErr := m.capturer.Stop()
-	segments, err := m.transcribeIfAvailable(ctx, wavPath, capErr)
+	rec, capErr := m.capturer.Stop()
+	segments, err := m.transcribeRecording(ctx, rec, capErr)
 	if err != nil {
 		m.current = &meeting // keep session so the caller can retry/cancel
 		return writer.Result{}, err
@@ -143,8 +144,12 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 	if err != nil {
 		return writer.Result{}, err
 	}
-	if m.cfg.Audio.DeleteWavOnFinish && wavPath != "" {
-		_ = os.Remove(wavPath)
+	if m.cfg.Audio.DeleteWavOnFinish {
+		for _, p := range []string{rec.SystemWav, rec.MicWav} {
+			if p != "" {
+				_ = os.Remove(p)
+			}
+		}
 	}
 	return res, nil
 }
@@ -269,15 +274,42 @@ func outputRoot(base, project string) string {
 	return filepath.Join(base, project)
 }
 
-// transcribeIfAvailable runs the transcriber when audio was actually captured.
-// Until M1 lands, the stub capturer reports ErrNotImplemented; we treat that as
-// "no audio" and produce an empty transcript so the pipeline still completes.
-func (m *Manager) transcribeIfAvailable(ctx context.Context, wavPath string, capErr error) ([]model.Segment, error) {
-	if errors.Is(capErr, audio.ErrNotImplemented) || wavPath == "" {
+// transcribeRecording transcribes whichever channels were captured, labels each
+// (system = participants, mic = you), and merges them ordered by start time.
+// The stub capturer reports ErrNotImplemented until real capture exists; that is
+// treated as "no audio" so the pipeline still completes with an empty transcript.
+func (m *Manager) transcribeRecording(ctx context.Context, rec audio.Recording, capErr error) ([]model.Segment, error) {
+	if errors.Is(capErr, audio.ErrNotImplemented) {
 		return nil, nil
 	}
 	if capErr != nil {
 		return nil, fmt.Errorf("stop capture: %w", capErr)
 	}
-	return m.transcriber.Transcribe(ctx, wavPath)
+
+	channels := []struct {
+		wav     string
+		speaker model.Speaker
+	}{
+		{rec.SystemWav, model.SpeakerOthers},
+		{rec.MicWav, model.SpeakerYou},
+	}
+
+	var segments []model.Segment
+	for _, ch := range channels {
+		if ch.wav == "" {
+			continue
+		}
+		segs, err := m.transcriber.Transcribe(ctx, ch.wav)
+		if err != nil {
+			return nil, err
+		}
+		for i := range segs {
+			segs[i].Speaker = ch.speaker
+		}
+		segments = append(segments, segs...)
+	}
+	sort.SliceStable(segments, func(i, j int) bool {
+		return segments[i].Start < segments[j].Start
+	})
+	return segments, nil
 }

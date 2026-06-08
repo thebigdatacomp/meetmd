@@ -18,6 +18,14 @@ var ErrNotImplemented = errors.New("audio capture not implemented on this platfo
 type Options struct {
 	HelperPath string // path to the OS capture helper binary (empty = look up in PATH)
 	WorkDir    string // directory for temporary WAV files
+	CaptureMic bool   // also capture the user's mic as a second channel
+}
+
+// Recording is the result of a finished capture. MicWav is empty when the mic
+// was not captured (or captured nothing usable).
+type Recording struct {
+	SystemWav string // others — system output (all participants)
+	MicWav    string // you — microphone
 }
 
 // Capturer records a session's audio to a WAV file on disk.
@@ -25,8 +33,8 @@ type Capturer interface {
 	// Start begins capturing for sessionID. It returns immediately; capture
 	// runs until Stop or Cancel.
 	Start(ctx context.Context, sessionID string) error
-	// Stop ends capture and returns the path to the recorded WAV.
-	Stop() (wavPath string, err error)
+	// Stop ends capture and returns the recorded WAV file(s).
+	Stop() (Recording, error)
 	// Cancel aborts capture and discards any recorded audio.
 	Cancel() error
 	// Pause stops writing audio without ending the recording; the WAV stays
@@ -41,7 +49,7 @@ type Capturer interface {
 type Stub struct{}
 
 func (Stub) Start(context.Context, string) error { return nil }
-func (Stub) Stop() (string, error)               { return "", ErrNotImplemented }
+func (Stub) Stop() (Recording, error)            { return Recording{}, ErrNotImplemented }
 func (Stub) Cancel() error                       { return nil }
 func (Stub) Pause() error                        { return nil }
 func (Stub) Resume() error                       { return nil }

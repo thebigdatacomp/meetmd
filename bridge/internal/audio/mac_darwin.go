@@ -30,6 +30,7 @@ type macCapturer struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
 	wavPath string
+	micPath string
 }
 
 func newMacCapturer(opts Options) *macCapturer {
@@ -50,40 +51,58 @@ func (c *macCapturer) Start(_ context.Context, sessionID string) error {
 		return fmt.Errorf("create work dir: %w", err)
 	}
 	wav := filepath.Join(c.opts.WorkDir, sessionID+".wav")
+	args := []string{wav} // no duration arg → record until signalled
 
-	cmd := exec.Command(helper, wav) // no duration arg → record until signalled
+	mic := ""
+	if c.opts.CaptureMic {
+		mic = filepath.Join(c.opts.WorkDir, sessionID+".mic.wav")
+		args = append(args, "--mic", mic)
+	}
+
+	cmd := exec.Command(helper, args...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start audio helper: %w", err)
 	}
-	c.cmd, c.wavPath = cmd, wav
+	c.cmd, c.wavPath, c.micPath = cmd, wav, mic
 	return nil
 }
 
-func (c *macCapturer) Stop() (string, error) {
+func (c *macCapturer) Stop() (Recording, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.cmd == nil {
-		return "", errors.New("no capture running")
+		return Recording{}, errors.New("no capture running")
 	}
-	cmd, wav := c.cmd, c.wavPath
-	c.cmd, c.wavPath = nil, ""
+	cmd, wav, mic := c.cmd, c.wavPath, c.micPath
+	c.cmd, c.wavPath, c.micPath = nil, "", ""
 
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		return "", fmt.Errorf("signal audio helper: %w", err)
+		return Recording{}, fmt.Errorf("signal audio helper: %w", err)
 	}
 	waitErr := cmd.Wait() // exit 2 = ran but captured nothing
 
+	rec := Recording{SystemWav: usableWav(wav), MicWav: usableWav(mic)}
 	// Treat "no usable audio" as no audio rather than a hard failure, so the
 	// session still completes with an empty transcript.
-	info, statErr := os.Stat(wav)
-	if statErr != nil || info.Size() < minUsableWav {
+	if rec.SystemWav == "" && rec.MicWav == "" {
 		if waitErr != nil {
-			return "", fmt.Errorf("audio helper produced no audio: %w", waitErr)
+			return Recording{}, fmt.Errorf("audio helper produced no audio: %w", waitErr)
 		}
-		return "", nil
+		return Recording{}, nil
 	}
-	return wav, nil
+	return rec, nil
+}
+
+// usableWav returns path when it points to a WAV with real audio, else "".
+func usableWav(path string) string {
+	if path == "" {
+		return ""
+	}
+	if info, err := os.Stat(path); err == nil && info.Size() >= minUsableWav {
+		return path
+	}
+	return ""
 }
 
 func (c *macCapturer) Pause() error  { return c.signal(syscall.SIGUSR1) }
@@ -104,12 +123,14 @@ func (c *macCapturer) Cancel() error {
 	if c.cmd == nil {
 		return nil
 	}
-	cmd, wav := c.cmd, c.wavPath
-	c.cmd, c.wavPath = nil, ""
+	cmd, wav, mic := c.cmd, c.wavPath, c.micPath
+	c.cmd, c.wavPath, c.micPath = nil, "", ""
 	_ = cmd.Process.Signal(syscall.SIGKILL)
 	_ = cmd.Wait()
-	if wav != "" {
-		_ = os.Remove(wav)
+	for _, p := range []string{wav, mic} {
+		if p != "" {
+			_ = os.Remove(p)
+		}
 	}
 	return nil
 }
