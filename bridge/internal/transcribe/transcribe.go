@@ -29,7 +29,8 @@ type Options struct {
 	Engine    string // "local" (whisper.cpp). Other engines fall back to Stub.
 	BinPath   string // whisper CLI path (empty = look up in PATH)
 	ModelPath string // ggml model file for the local engine
-	Language  string // e.g. "pt"
+	Language  string // e.g. "pt" or "auto"
+	VADModel  string // optional ggml VAD model (enables silence skipping)
 }
 
 // New returns a Transcriber for the given options, plus a human-readable note
@@ -49,7 +50,14 @@ func New(o Options) (Transcriber, string) {
 	if _, err := os.Stat(o.ModelPath); err != nil {
 		return Stub{}, "modelo whisper não encontrado em " + o.ModelPath + " — transcript sairá vazio"
 	}
-	return Whisper{BinPath: bin, ModelPath: o.ModelPath, Language: o.Language}, "whisper local: " + bin
+	w := Whisper{BinPath: bin, ModelPath: o.ModelPath, Language: o.Language, VADModel: o.VADModel}
+	note := "whisper local: " + bin
+	if o.VADModel != "" {
+		if _, err := os.Stat(o.VADModel); err == nil {
+			note += " (VAD on)"
+		}
+	}
+	return w, note
 }
 
 func lookupWhisper() string {

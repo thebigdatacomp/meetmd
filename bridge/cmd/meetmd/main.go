@@ -91,6 +91,7 @@ func runServe() {
 		BinPath:   cfg.Whisper.BinPath,
 		ModelPath: cfg.Whisper.ModelPath,
 		Language:  cfg.Language,
+		VADModel:  cfg.Whisper.VADModel,
 	})
 	log.Printf("transcrição: %s", note)
 

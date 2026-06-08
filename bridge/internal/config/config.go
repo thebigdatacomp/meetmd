@@ -15,6 +15,7 @@ const (
 	defaultLanguage = "auto" // detect per recording; pin to "pt"/"en"/... to force
 	defaultEngine   = "local" // local | api
 	defaultModel    = "ggml-base.bin"
+	defaultVADModel = "ggml-silero-v5.1.2.bin"
 	defaultInterval = 3     // seconds, auto-detect poll
 	defaultMode     = "ask" // auto-detect: prompt before recording
 
@@ -45,6 +46,7 @@ type Whisper struct {
 	Engine    string `yaml:"engine"`     // local | api
 	BinPath   string `yaml:"bin_path"`   // whisper CLI path (empty = look up in PATH)
 	ModelPath string `yaml:"model_path"` // path to ggml model for local engine
+	VADModel  string `yaml:"vad_model"`  // optional ggml VAD model (enables silence skipping)
 }
 
 // Audio configures capture behaviour.
@@ -60,7 +62,7 @@ func Default() Config {
 		OutputRoot: defaultOutputRoot(),
 		Port:       defaultPort,
 		Language:   defaultLanguage,
-		Whisper:    Whisper{Engine: defaultEngine, ModelPath: defaultModelPath()},
+		Whisper:    Whisper{Engine: defaultEngine, ModelPath: defaultModelPath(), VADModel: defaultVADModelPath()},
 		Audio:      Audio{CaptureMic: true, DeleteWavOnFinish: true},
 		AutoDetect: AutoDetect{Enabled: true, Mode: defaultMode, IntervalSeconds: defaultInterval},
 	}
@@ -103,6 +105,9 @@ func (c *Config) applyDefaults() {
 	if c.Whisper.ModelPath == "" {
 		c.Whisper.ModelPath = d.Whisper.ModelPath
 	}
+	if c.Whisper.VADModel == "" {
+		c.Whisper.VADModel = d.Whisper.VADModel
+	}
 	if c.AutoDetect.IntervalSeconds == 0 {
 		c.AutoDetect.IntervalSeconds = d.AutoDetect.IntervalSeconds
 	}
@@ -122,6 +127,10 @@ func defaultOutputRoot() string {
 
 func defaultModelPath() string {
 	return filepath.Join(homeDir(), configDirName, "models", defaultModel)
+}
+
+func defaultVADModelPath() string {
+	return filepath.Join(homeDir(), configDirName, "models", defaultVADModel)
 }
 
 func homeDir() string {

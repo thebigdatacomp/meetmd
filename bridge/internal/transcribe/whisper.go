@@ -20,6 +20,7 @@ type Whisper struct {
 	BinPath   string
 	ModelPath string
 	Language  string // ISO code (e.g. "pt", "en") or "auto" to detect
+	VADModel  string // optional ggml VAD model; enables silence skipping when present
 }
 
 // Transcribe runs whisper.cpp over wavPath and parses its JSON output into
@@ -33,13 +34,25 @@ func (w Whisper) Transcribe(ctx context.Context, wavPath string) ([]model.Segmen
 	jsonPath := outBase + ".json"
 	defer os.Remove(jsonPath)
 
-	cmd := exec.CommandContext(ctx, w.BinPath,
+	args := []string{
 		"-m", w.ModelPath,
 		"-f", wavPath,
 		"-l", lang,
+		"-mc", "0", // no context carryover → avoids repetition-loop hallucinations
+		"-sns",     // suppress non-speech tokens ([Música], (speaking...), etc.)
 		"-oj",        // emit JSON with timestamps
 		"-of", outBase, // output file base (whisper appends .json)
-	)
+	}
+	// VAD (when a model is available) skips non-speech audio, which kills the
+	// hallucinations whisper otherwise produces on near-silent channels (e.g. the
+	// mic when you're mostly listening) and improves language auto-detection.
+	if w.VADModel != "" {
+		if _, err := os.Stat(w.VADModel); err == nil {
+			args = append(args, "--vad", "-vm", w.VADModel)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, w.BinPath, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("whisper: %w: %s", err, strings.TrimSpace(string(out)))
 	}
