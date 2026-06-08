@@ -6,7 +6,8 @@
 
 - **Ícone reflete o estado:** 🔴 gravando · ⏸ pausado · 🎙 pronto · ⚠︎ bridge offline.
 - **Popup ao detectar reunião:** quando o bridge detecta um Google Meet no Safari (modo `ask`), pergunta *"Começar a gravar?"* com **Gravar** / **Agora não** (não pergunta de novo a mesma reunião recusada).
-- **Menu:** Iniciar · Pausar/Retomar · Parar e salvar · Abrir pasta dos arquivos · Abrir painel · Sair.
+- **Menu:** Iniciar · Pausar/Retomar · Parar e salvar · Abrir pasta dos arquivos · **Configurações…** · Sair.
+- **Configurações:** janela nativa (lê/grava via `GET`/`PUT /settings` do bridge) — pasta de saída, idioma, projeto padrão, detecção automática (perguntar/automático/desligada), incluir microfone e apagar áudio após transcrever. Caminhos internos (modelo, helper, VAD) não são expostos; o modelo é fixo no `small`. Mudanças aplicam sem reiniciar (hot-reload).
 - Se o bridge estiver offline, tenta subi-lo (`meetmd serve`) — procura o binário em `MEETMD_BIN`, ao lado do app, ou nos caminhos comuns.
 
 ## Build & run

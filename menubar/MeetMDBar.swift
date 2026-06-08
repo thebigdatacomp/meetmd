@@ -43,6 +43,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var lastProject = ""       // remembered across prompts
     private var promptShowing = false
     private var triedLaunch = false
+    private var settingsController: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -194,6 +195,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(URL(fileURLWithPath: outputRoot))
     }
 
+    @objc private func openSettings() {
+        if settingsController == nil {
+            settingsController = SettingsWindowController(base: Bridge.base)
+        }
+        settingsController?.show()
+    }
+
     @objc private func quit() { NSApp.terminate(nil) }
 
     // promptStartInput asks for a title and project before a manual recording.
@@ -251,6 +259,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 break // transcrevendo — sem ações
             }
             menu.addItem(item("Abrir pasta dos arquivos", #selector(openFolder), "f"))
+            menu.addItem(item("Configurações…", #selector(openSettings), ","))
         }
         menu.addItem(.separator())
         menu.addItem(item("Sair", #selector(quit), "q"))
@@ -321,6 +330,186 @@ final class AppController: NSObject, NSApplicationDelegate {
         URLSession.shared.dataTask(with: req) { data, resp, err in
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             done(data, err == nil && (200..<300).contains(code))
+        }.resume()
+    }
+}
+
+// MARK: - Settings window
+
+// A native settings window backed by the bridge's GET/PUT /settings. Only
+// user-facing options are shown; internal paths (model, helper, VAD) are hidden.
+final class SettingsWindowController: NSWindowController {
+    private let base: String
+
+    private let outputField = NSTextField()
+    private let projectField = NSTextField()
+    private let languagePopup = NSPopUpButton()
+    private let autoDetectPopup = NSPopUpButton()
+    private let micCheck = NSButton(checkboxWithTitle: "Incluir minha voz (microfone)", target: nil, action: nil)
+    private let deleteCheck = NSButton(checkboxWithTitle: "Apagar áudio bruto após transcrever", target: nil, action: nil)
+    private let hint = NSTextField(labelWithString: "")
+
+    // (display title, config value) pairs.
+    private let languages = [("Automático", "auto"), ("Português", "pt"), ("Espanhol", "es"), ("Inglês", "en")]
+    private let autoModes = [("Perguntar antes de gravar", "ask"), ("Gravar automaticamente", "auto"), ("Desligada", "off")]
+
+    init(base: String) {
+        self.base = base
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 470, height: 360),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "MeetMD — Configurações"
+        super.init(window: window)
+        buildUI()
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    func show() {
+        load()
+        NSApp.activate(ignoringOtherApps: true)
+        window?.center()
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func buildUI() {
+        languagePopup.addItems(withTitles: languages.map { $0.0 })
+        autoDetectPopup.addItems(withTitles: autoModes.map { $0.0 })
+        outputField.placeholderString = "/Users/…/meetings"
+        projectField.placeholderString = "ex.: bora (opcional)"
+
+        let choose = NSButton(title: "Escolher…", target: self, action: #selector(chooseFolder))
+        choose.bezelStyle = .rounded
+        let outputRow = NSStackView(views: [outputField, choose])
+        outputRow.orientation = .horizontal
+        outputRow.spacing = 6
+
+        let form = NSStackView(views: [
+            labeled("Pasta de saída", outputRow),
+            labeled("Idioma", languagePopup),
+            labeled("Projeto padrão", projectField),
+            labeled("Detecção automática", autoDetectPopup),
+            labeled("", micCheck),
+            labeled("", deleteCheck),
+        ])
+        form.orientation = .vertical
+        form.alignment = .leading
+        form.spacing = 10
+        form.translatesAutoresizingMaskIntoConstraints = false
+
+        hint.textColor = .systemRed
+        hint.font = .systemFont(ofSize: 11)
+
+        let save = NSButton(title: "Salvar", target: self, action: #selector(saveSettings))
+        save.bezelStyle = .rounded
+        save.keyEquivalent = "\r"
+        let cancel = NSButton(title: "Cancelar", target: self, action: #selector(cancel))
+        cancel.bezelStyle = .rounded
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let buttons = NSStackView(views: [hint, spacer, cancel, save])
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+
+        let content = NSView()
+        content.addSubview(form)
+        content.addSubview(buttons)
+        window?.contentView = content
+
+        NSLayoutConstraint.activate([
+            form.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+            form.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            form.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            outputField.widthAnchor.constraint(greaterThanOrEqualToConstant: 250),
+            buttons.topAnchor.constraint(equalTo: form.bottomAnchor, constant: 18),
+            buttons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            buttons.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+        ])
+    }
+
+    private func labeled(_ title: String, _ control: NSView) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.alignment = .right
+        label.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        let row = NSStackView(views: [label, control])
+        row.orientation = .horizontal
+        row.spacing = 8
+        return row
+    }
+
+    // --- load / save --------------------------------------------------------
+
+    private func load() {
+        request("GET", nil) { [weak self] obj in
+            guard let self = self, let o = obj else {
+                self?.hint.stringValue = "Bridge offline"
+                return
+            }
+            self.outputField.stringValue = o["outputRoot"] as? String ?? ""
+            self.projectField.stringValue = o["defaultProject"] as? String ?? ""
+            self.select(self.languagePopup, self.languages, value: o["language"] as? String ?? "auto")
+            self.select(self.autoDetectPopup, self.autoModes, value: o["autoDetect"] as? String ?? "ask")
+            self.micCheck.state = (o["captureMic"] as? Bool ?? true) ? .on : .off
+            self.deleteCheck.state = (o["deleteAudio"] as? Bool ?? true) ? .on : .off
+            self.hint.stringValue = ""
+        }
+    }
+
+    @objc private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            outputField.stringValue = url.path
+        }
+    }
+
+    @objc private func saveSettings() {
+        let body: [String: Any] = [
+            "outputRoot": outputField.stringValue,
+            "language": value(languagePopup, languages),
+            "defaultProject": projectField.stringValue,
+            "autoDetect": value(autoDetectPopup, autoModes),
+            "captureMic": micCheck.state == .on,
+            "deleteAudio": deleteCheck.state == .on,
+        ]
+        request("PUT", body) { [weak self] obj in
+            if obj != nil {
+                self?.window?.close()
+            } else {
+                self?.hint.stringValue = "Falha ao salvar (pasta inválida ou bridge offline)"
+            }
+        }
+    }
+
+    @objc private func cancel() { window?.close() }
+
+    // --- helpers ------------------------------------------------------------
+
+    private func select(_ popup: NSPopUpButton, _ items: [(String, String)], value: String) {
+        if let i = items.firstIndex(where: { $0.1 == value }) { popup.selectItem(at: i) }
+    }
+
+    private func value(_ popup: NSPopUpButton, _ items: [(String, String)]) -> String {
+        let i = popup.indexOfSelectedItem
+        return (i >= 0 && i < items.count) ? items[i].1 : items.first?.1 ?? ""
+    }
+
+    private func request(_ method: String, _ body: [String: Any]?, done: @escaping ([String: Any]?) -> Void) {
+        guard let url = URL(string: base + "/settings") else { done(nil); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.timeoutInterval = 10
+        if let body = body {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            let ok = (resp as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+            let obj = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            DispatchQueue.main.async { done(err == nil && ok ? obj : nil) }
         }.resume()
     }
 }
