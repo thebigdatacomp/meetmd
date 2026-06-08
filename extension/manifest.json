@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "MeetMD",
+  "version": "0.1.0",
+  "description": "Captura reuniões do Google Meet e gera transcrição estruturada em Markdown via o bridge local MeetMD.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["lib/protocol.js", "content/meet.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "MeetMD"
+  }
+}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <strong>MeetMD</strong>
+      <span id="health" class="dot" title="Bridge"></span>
+    </header>
+
+    <div id="status" class="status">…</div>
+    <div id="meeting" class="meeting hidden"></div>
+
+    <div class="actions">
+      <button id="start">Iniciar gravação</button>
+      <button id="stop" class="danger hidden">Parar e salvar</button>
+      <button id="cancel" class="ghost hidden">Cancelar</button>
+    </div>
+
+    <p id="hint" class="hint"></p>
+
+    <script src="../lib/protocol.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
