@@ -34,5 +34,5 @@ Este helper é o protótipo do binário que o **bridge Go** vai invocar no macOS
 ## Notas
 
 - `excludesCurrentProcessAudio = true` evita capturar o próprio áudio do helper.
-- Saída: 48kHz, estéreo, PCM 16-bit (compatível com whisper.cpp).
+- Saída: 16kHz, mono, PCM 16-bit — formato nativo do whisper.cpp (sem resample).
 - Windows (WASAPI loopback) e Linux (monitor PipeWire/PulseAudio) são caminhos análogos, sem o atrito de permissão do macOS.

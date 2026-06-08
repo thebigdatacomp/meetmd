@@ -24,12 +24,22 @@ func main() {
 	}
 
 	// Real OS audio capture (macOS via ScreenCaptureKit; Stub elsewhere).
-	// Transcription is still a stub until M2 wires up whisper.cpp.
 	capturer := audio.NewCapturer(audio.Options{
 		HelperPath: cfg.Audio.MacHelperPath,
 		WorkDir:    filepath.Join(os.TempDir(), "meetmd"),
 	})
-	mgr := session.New(cfg, capturer, transcribe.Stub{})
+
+	// Local whisper.cpp transcription (falls back to an empty transcript if the
+	// CLI or model is missing).
+	transcriber, note := transcribe.New(transcribe.Options{
+		Engine:    cfg.Whisper.Engine,
+		BinPath:   cfg.Whisper.BinPath,
+		ModelPath: cfg.Whisper.ModelPath,
+		Language:  cfg.Language,
+	})
+	log.Printf("transcrição: %s", note)
+
+	mgr := session.New(cfg, capturer, transcriber)
 	srv := server.New(mgr)
 
 	log.Printf("MeetMD bridge listening on 127.0.0.1:%d", cfg.Port)

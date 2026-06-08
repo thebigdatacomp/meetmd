@@ -12,8 +12,9 @@ import (
 
 const (
 	defaultPort     = 8765
-	defaultLanguage = "pt"
+	defaultLanguage = "auto" // detect per recording; pin to "pt"/"en"/... to force
 	defaultEngine   = "local" // local | api
+	defaultModel    = "ggml-base.bin"
 
 	configDirName  = ".meetmd"
 	configFileName = "config.yaml"
@@ -31,6 +32,7 @@ type Config struct {
 // Whisper configures the transcription engine.
 type Whisper struct {
 	Engine    string `yaml:"engine"`     // local | api
+	BinPath   string `yaml:"bin_path"`   // whisper CLI path (empty = look up in PATH)
 	ModelPath string `yaml:"model_path"` // path to ggml model for local engine
 }
 
@@ -101,7 +103,7 @@ func defaultOutputRoot() string {
 }
 
 func defaultModelPath() string {
-	return filepath.Join(homeDir(), configDirName, "models", "ggml-small.bin")
+	return filepath.Join(homeDir(), configDirName, "models", defaultModel)
 }
 
 func homeDir() string {

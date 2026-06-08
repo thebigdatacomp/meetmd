@@ -16,10 +16,11 @@ import AVFoundation
 import CoreMedia
 import ScreenCaptureKit
 
-// WAV output format: 48kHz stereo, 16-bit PCM (interleaved).
+// WAV output format: 16kHz mono, 16-bit PCM — exactly what whisper.cpp expects,
+// so the captured file feeds transcription with no resampling.
 private enum Output {
-    static let sampleRate = 48_000.0
-    static let channels: AVAudioChannelCount = 2
+    static let sampleRate = 16_000.0
+    static let channels: AVAudioChannelCount = 1
     static let settings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
         AVSampleRateKey: sampleRate,
