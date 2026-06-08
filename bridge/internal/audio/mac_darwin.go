@@ -86,6 +86,18 @@ func (c *macCapturer) Stop() (string, error) {
 	return wav, nil
 }
 
+func (c *macCapturer) Pause() error  { return c.signal(syscall.SIGUSR1) }
+func (c *macCapturer) Resume() error { return c.signal(syscall.SIGUSR2) }
+
+func (c *macCapturer) signal(sig syscall.Signal) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cmd == nil {
+		return errors.New("no capture running")
+	}
+	return c.cmd.Process.Signal(sig)
+}
+
 func (c *macCapturer) Cancel() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

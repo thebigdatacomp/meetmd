@@ -48,6 +48,7 @@ type Segment struct {
 type Meeting struct {
 	ID           string
 	Title        string
+	Project      string // optional; routes output to a per-project folder
 	Platform     Platform
 	Participants []string
 	StartedAt    time.Time

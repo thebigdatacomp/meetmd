@@ -4,8 +4,9 @@ bridge/bin/
 *.test
 *.out
 
-# Spikes — binários compilados (mantém só o fonte)
+# Binários Swift compilados (mantém só o fonte)
 spike/**/system-audio-recorder
+menubar/meetmd-bar
 
 # Node / extension
 node_modules/

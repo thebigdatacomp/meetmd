@@ -5,13 +5,20 @@ package server
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/thebigdatacomp/meetmd/internal/session"
 )
+
+// uiFS holds the local control panel served at "/".
+//
+//go:embed ui
+var uiFS embed.FS
 
 const (
 	loopbackHost  = "127.0.0.1"
@@ -37,7 +44,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/sessions/start", s.handleStart)
 	mux.HandleFunc(sessionPrefix, s.handleSessionByID) // /sessions/{id}/{action}
+	mux.Handle("/", uiServer())                        // control panel (least specific)
 	return mux
+}
+
+// uiServer serves the embedded control panel files (index.html at "/").
+func uiServer() http.Handler {
+	sub, err := fs.Sub(uiFS, "ui")
+	if err != nil {
+		panic(err) // embedded FS is known at build time
+	}
+	return http.FileServer(http.FS(sub))
 }
 
 // ListenAndServe starts the bridge on the loopback interface at the given port.
@@ -64,6 +81,10 @@ func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		s.handleStop(w, r, id)
 	case "cancel":
 		s.handleCancel(w, r, id)
+	case "pause":
+		s.handlePause(w, r, id)
+	case "resume":
+		s.handleResume(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "unknown action: "+action)
 	}

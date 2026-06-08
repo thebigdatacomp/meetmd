@@ -15,6 +15,8 @@ const (
 	defaultLanguage = "auto" // detect per recording; pin to "pt"/"en"/... to force
 	defaultEngine   = "local" // local | api
 	defaultModel    = "ggml-base.bin"
+	defaultInterval = 3     // seconds, auto-detect poll
+	defaultMode     = "ask" // auto-detect: prompt before recording
 
 	configDirName  = ".meetmd"
 	configFileName = "config.yaml"
@@ -22,11 +24,20 @@ const (
 
 // Config is the bridge's runtime configuration.
 type Config struct {
-	OutputRoot string  `yaml:"output_root"`
-	Port       int     `yaml:"port"`
-	Language   string  `yaml:"language"`
-	Whisper    Whisper `yaml:"whisper"`
-	Audio      Audio   `yaml:"audio"`
+	OutputRoot string     `yaml:"output_root"`
+	Port       int        `yaml:"port"`
+	Language   string     `yaml:"language"`
+	Whisper    Whisper    `yaml:"whisper"`
+	Audio      Audio      `yaml:"audio"`
+	AutoDetect AutoDetect `yaml:"auto_detect"`
+}
+
+// AutoDetect configures browser meeting auto-detection (macOS/Safari).
+type AutoDetect struct {
+	Enabled         bool   `yaml:"enabled"`
+	Mode            string `yaml:"mode"`             // "ask" (prompt) | "auto" (record automatically)
+	Project         string `yaml:"project"`          // project tag for auto-detected recordings
+	IntervalSeconds int    `yaml:"interval_seconds"` // poll interval
 }
 
 // Whisper configures the transcription engine.
@@ -51,6 +62,7 @@ func Default() Config {
 		Language:   defaultLanguage,
 		Whisper:    Whisper{Engine: defaultEngine, ModelPath: defaultModelPath()},
 		Audio:      Audio{CaptureMic: true, DeleteWavOnFinish: true},
+		AutoDetect: AutoDetect{Enabled: true, Mode: defaultMode, IntervalSeconds: defaultInterval},
 	}
 }
 
@@ -90,6 +102,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Whisper.ModelPath == "" {
 		c.Whisper.ModelPath = d.Whisper.ModelPath
+	}
+	if c.AutoDetect.IntervalSeconds == 0 {
+		c.AutoDetect.IntervalSeconds = d.AutoDetect.IntervalSeconds
+	}
+	if c.AutoDetect.Mode == "" {
+		c.AutoDetect.Mode = d.AutoDetect.Mode
 	}
 }
 

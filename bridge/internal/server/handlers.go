@@ -13,6 +13,7 @@ import (
 // startRequest is the JSON body for POST /sessions/start.
 type startRequest struct {
 	Title        string   `json:"title"`
+	Project      string   `json:"project"` // optional; routes output per project
 	Platform     string   `json:"platform"`
 	Participants []string `json:"participants"`
 	StartedAt    string   `json:"startedAt"` // optional RFC3339
@@ -49,6 +50,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	meeting, err := s.mgr.Start(ctx(r), session.StartRequest{
 		Title:        req.Title,
+		Project:      req.Project,
 		Platform:     model.Platform(req.Platform),
 		Participants: req.Participants,
 		StartedAt:    started,
@@ -76,6 +78,28 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, id string) {
 		"sessionDir": res.SessionDir,
 		"files":      res.Files,
 	})
+}
+
+func (s *Server) handlePause(w http.ResponseWriter, r *http.Request, id string) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if err := s.mgr.Pause(id); err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
+}
+
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request, id string) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if err := s.mgr.Resume(id); err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resumed"})
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, id string) {

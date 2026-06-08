@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MeetMD</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>MeetMD</h1>
+        <span id="dot" class="dot" title="Bridge"></span>
+      </header>
+
+      <p id="state" class="state">…</p>
+      <div id="info" class="info hidden"></div>
+
+      <form id="form">
+        <label>Projeto <input id="project" placeholder="ex.: bora" autocomplete="off" /></label>
+        <label>Título <input id="title" placeholder="ex.: Daily" autocomplete="off" /></label>
+        <div class="actions">
+          <button id="start" type="submit">Iniciar gravação</button>
+          <button id="pause" type="button" class="ghost hidden">Pausar</button>
+          <button id="resume" type="button" class="hidden">Retomar</button>
+          <button id="stop" type="button" class="danger hidden">Parar e salvar</button>
+          <button id="cancel" type="button" class="ghost hidden">Cancelar</button>
+        </div>
+      </form>
+
+      <p id="hint" class="hint"></p>
+      <p class="foot">Reuniões do Google Meet no Safari são detectadas automaticamente.</p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -39,6 +39,16 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var audioFile: AVAudioFile?
     private var samplesWritten: AVAudioFramePosition = 0
 
+    // paused is read on the audio queue and written from signal handlers, so it
+    // is guarded by a lock. While paused, samples are dropped, which keeps the
+    // recording continuous (no gap) across pause/resume.
+    private let lock = NSLock()
+    private var pausedFlag = false
+    var paused: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return pausedFlag }
+        set { lock.lock(); pausedFlag = newValue; lock.unlock() }
+    }
+
     init(outputURL: URL) {
         self.outputURL = outputURL
     }
@@ -75,7 +85,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     // SCStreamOutput: receives audio sample buffers.
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
-        guard type == .audio, sampleBuffer.isValid,
+        guard type == .audio, !paused, sampleBuffer.isValid,
               let pcm = sampleBuffer.toPCMBuffer() else { return }
         do {
             if audioFile == nil {
@@ -158,13 +168,20 @@ Task {
     }
 }
 
-// Graceful stop on SIGTERM/SIGINT (how the Go bridge ends a recording).
+// Signal-driven control (how the Go bridge drives the recording):
+//   SIGTERM/SIGINT → stop & finalize    SIGUSR1 → pause    SIGUSR2 → resume
 // Sources must be retained or they are deallocated and never fire.
 var signalSources: [DispatchSourceSignal] = []
-for sig in [SIGTERM, SIGINT] {
+let signalActions: [(Int32, () -> Void)] = [
+    (SIGTERM, { stopAndExit() }),
+    (SIGINT, { stopAndExit() }),
+    (SIGUSR1, { recorder.paused = true; print("paused") }),
+    (SIGUSR2, { recorder.paused = false; print("resumed") }),
+]
+for (sig, handler) in signalActions {
     signal(sig, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-    source.setEventHandler { stopAndExit() }
+    source.setEventHandler(handler: handler)
     source.resume()
     signalSources.append(source)
 }

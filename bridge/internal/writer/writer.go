@@ -139,6 +139,9 @@ func frontmatter(m model.Meeting, kind, status string) string {
 	fmt.Fprintf(&b, "title: %s\n", titleOrFallback(m))
 	fmt.Fprintf(&b, "date: %s\n", m.StartedAt.Format("2006-01-02"))
 	if kind == "" { // full identity only on meeting.md
+		if m.Project != "" {
+			fmt.Fprintf(&b, "project: %s\n", m.Project)
+		}
 		fmt.Fprintf(&b, "start: %q\n", m.StartedAt.Format("15:04"))
 		fmt.Fprintf(&b, "end: %q\n", m.EndedAt.Format("15:04"))
 		fmt.Fprintf(&b, "duration_min: %d\n", m.DurationMin())

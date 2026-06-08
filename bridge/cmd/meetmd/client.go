@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,9 +22,15 @@ var httpClient = &http.Client{Timeout: 10 * time.Minute}
 const defaultPort = 8765
 
 func runStart(args []string) {
-	title := strings.TrimSpace(strings.Join(args, " "))
+	fs := flag.NewFlagSet("start", flag.ExitOnError)
+	project := fs.String("p", "", "projeto (separa as gravações em output_root/<projeto>)")
+	fs.StringVar(project, "project", "", "alias de -p")
+	_ = fs.Parse(args)
+
+	title := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	payload := map[string]any{
 		"title":     title,
+		"project":   strings.TrimSpace(*project),
 		"platform":  string(model.PlatformManual),
 		"startedAt": time.Now().Format(time.RFC3339),
 	}
@@ -33,7 +40,11 @@ func runStart(args []string) {
 	if err := doJSON(http.MethodPost, "/sessions/start", payload, &out); err != nil {
 		clientFail(err)
 	}
-	fmt.Printf("● gravando: %s\n", out.SessionID)
+	if p := strings.TrimSpace(*project); p != "" {
+		fmt.Printf("● gravando [%s]: %s\n", p, out.SessionID)
+	} else {
+		fmt.Printf("● gravando: %s\n", out.SessionID)
+	}
 }
 
 func runStop() {
@@ -51,6 +62,30 @@ func runStop() {
 	fmt.Printf("✓ salvo em %s\n", out.SessionDir)
 }
 
+func runPause() {
+	id, recording := activeSession()
+	if !recording {
+		fmt.Println("○ nada gravando")
+		return
+	}
+	if err := doJSON(http.MethodPost, "/sessions/"+id+"/pause", nil, nil); err != nil {
+		clientFail(err)
+	}
+	fmt.Println("⏸ pausado")
+}
+
+func runResume() {
+	id, recording := activeSession()
+	if !recording {
+		fmt.Println("○ nada gravando")
+		return
+	}
+	if err := doJSON(http.MethodPost, "/sessions/"+id+"/resume", nil, nil); err != nil {
+		clientFail(err)
+	}
+	fmt.Println("● retomado")
+}
+
 func runCancel() {
 	id, recording := activeSession()
 	if !recording {
@@ -65,17 +100,23 @@ func runCancel() {
 
 func runStatus() {
 	state, meeting := status()
-	if state == string(stateRecording) && meeting != nil {
+	switch {
+	case state == stateRecording && meeting != nil:
 		fmt.Printf("● gravando: %s\n", titleOr(meeting.Title))
-		return
+	case state == statePaused && meeting != nil:
+		fmt.Printf("⏸ pausado: %s\n", titleOr(meeting.Title))
+	default:
+		fmt.Println("○ ocioso")
 	}
-	fmt.Println("○ ocioso")
 }
 
 // --- helpers ----------------------------------------------------------------
 
-// stateRecording mirrors session.StateRecording without importing the package.
-const stateRecording = "recording"
+// State strings mirror session.State* without importing the package.
+const (
+	stateRecording = "recording"
+	statePaused    = "paused"
+)
 
 type statusMeeting struct {
 	ID    string `json:"ID"`
@@ -95,7 +136,7 @@ func status() (string, *statusMeeting) {
 
 func activeSession() (string, bool) {
 	state, meeting := status()
-	if state == stateRecording && meeting != nil {
+	if (state == stateRecording || state == statePaused) && meeting != nil {
 		return meeting.ID, true
 	}
 	return "", false

@@ -29,6 +29,11 @@ type Capturer interface {
 	Stop() (wavPath string, err error)
 	// Cancel aborts capture and discards any recorded audio.
 	Cancel() error
+	// Pause stops writing audio without ending the recording; the WAV stays
+	// continuous (the paused interval is dropped). Resume continues it.
+	Pause() error
+	// Resume continues a paused recording.
+	Resume() error
 }
 
 // Stub is a no-op Capturer so the bridge runs end-to-end before M1. It records
@@ -38,3 +43,5 @@ type Stub struct{}
 func (Stub) Start(context.Context, string) error { return nil }
 func (Stub) Stop() (string, error)               { return "", ErrNotImplemented }
 func (Stub) Cancel() error                       { return nil }
+func (Stub) Pause() error                        { return nil }
+func (Stub) Resume() error                       { return nil }

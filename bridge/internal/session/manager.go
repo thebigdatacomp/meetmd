@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,11 +35,20 @@ type State string
 const (
 	StateIdle      State = "idle"
 	StateRecording State = "recording"
+	StatePaused    State = "paused"
 )
+
+// DetectedMeeting is a meeting found in the browser but not yet being recorded;
+// a UI can prompt the user to start. Set by the detector (see internal/detect).
+type DetectedMeeting struct {
+	Code  string `json:"code"`
+	Title string `json:"title"`
+}
 
 // StartRequest is the metadata supplied when a recording begins.
 type StartRequest struct {
 	Title        string
+	Project      string // optional; routes output to output_root/<project>
 	Platform     model.Platform
 	Participants []string
 	StartedAt    time.Time // optional; defaults to now
@@ -44,8 +56,10 @@ type StartRequest struct {
 
 // Status snapshots the manager for the /status endpoint.
 type Status struct {
-	State   State          `json:"state"`
-	Meeting *model.Meeting `json:"meeting,omitempty"`
+	State      State            `json:"state"`
+	Meeting    *model.Meeting   `json:"meeting,omitempty"`
+	Detected   *DetectedMeeting `json:"detected,omitempty"`
+	OutputRoot string           `json:"outputRoot"`
 }
 
 // Manager owns the single active session and its dependencies.
@@ -55,8 +69,10 @@ type Manager struct {
 	transcriber transcribe.Transcriber
 	now         func() time.Time // injectable clock for tests
 
-	mu      sync.Mutex
-	current *model.Meeting
+	mu       sync.Mutex
+	current  *model.Meeting
+	paused   bool
+	detected *DetectedMeeting
 }
 
 // New builds a Manager from its dependencies.
@@ -90,6 +106,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, e
 	}
 	meeting := model.Meeting{
 		Title:        req.Title,
+		Project:      sanitizeProject(req.Project),
 		Platform:     platform,
 		Participants: req.Participants,
 		StartedAt:    started,
@@ -100,6 +117,8 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, e
 		return model.Meeting{}, fmt.Errorf("start capture: %w", err)
 	}
 	m.current = &meeting
+	m.paused = false
+	m.detected = nil
 	return meeting, nil
 }
 
@@ -120,7 +139,7 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 		return writer.Result{}, err
 	}
 
-	res, err := writer.Write(m.cfg.OutputRoot, meeting, segments)
+	res, err := writer.Write(outputRoot(m.cfg.OutputRoot, meeting.Project), meeting, segments)
 	if err != nil {
 		return writer.Result{}, err
 	}
@@ -144,11 +163,76 @@ func (m *Manager) Cancel(id string) error {
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.current == nil {
-		return Status{State: StateIdle}
+	st := Status{State: StateIdle, OutputRoot: m.cfg.OutputRoot, Detected: m.detected}
+	if m.current != nil {
+		meeting := *m.current
+		st.Meeting = &meeting
+		st.State = StateRecording
+		if m.paused {
+			st.State = StatePaused
+		}
 	}
-	meeting := *m.current
-	return Status{State: StateRecording, Meeting: &meeting}
+	return st
+}
+
+// Pause stops capturing without ending the recording. Idempotent.
+func (m *Manager) Pause(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkActive(id); err != nil {
+		return err
+	}
+	if m.paused {
+		return nil
+	}
+	if err := m.capturer.Pause(); err != nil {
+		return err
+	}
+	m.paused = true
+	return nil
+}
+
+// Resume continues a paused recording. Idempotent.
+func (m *Manager) Resume(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkActive(id); err != nil {
+		return err
+	}
+	if !m.paused {
+		return nil
+	}
+	if err := m.capturer.Resume(); err != nil {
+		return err
+	}
+	m.paused = false
+	return nil
+}
+
+// SetDetected records a meeting found in the browser (used by the detector in
+// "ask" mode so a UI can prompt the user). ClearDetected removes it.
+func (m *Manager) SetDetected(code, title string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.detected = &DetectedMeeting{Code: code, Title: title}
+}
+
+// ClearDetected removes any pending detected meeting.
+func (m *Manager) ClearDetected() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.detected = nil
+}
+
+// checkActive validates id against the active session. Caller holds m.mu.
+func (m *Manager) checkActive(id string) error {
+	if m.current == nil {
+		return ErrNoSession
+	}
+	if id != "" && id != m.current.ID {
+		return ErrUnknownID
+	}
+	return nil
 }
 
 // takeCurrent validates the id against the active session and detaches it.
@@ -162,7 +246,27 @@ func (m *Manager) takeCurrent(id string) (model.Meeting, error) {
 	}
 	meeting := *m.current
 	m.current = nil
+	m.paused = false
 	return meeting, nil
+}
+
+// projectSlug matches characters not allowed in a project folder name.
+var projectSlug = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// sanitizeProject normalizes a project name into a safe single-segment folder
+// name (lowercase, no path separators), preventing path traversal.
+func sanitizeProject(project string) string {
+	s := strings.ToLower(strings.TrimSpace(project))
+	s = projectSlug.ReplaceAllString(s, "-")
+	return strings.Trim(s, "-")
+}
+
+// outputRoot returns the base root, or a per-project subfolder when project set.
+func outputRoot(base, project string) string {
+	if project == "" {
+		return base
+	}
+	return filepath.Join(base, project)
 }
 
 // transcribeIfAvailable runs the transcriber when audio was actually captured.
