@@ -1,0 +1,41 @@
+# Go
+bridge/bin/
+*.exe
+*.test
+*.out
+
+# Spikes — binários compilados (mantém só o fonte)
+spike/**/system-audio-recorder
+
+# Node / extension
+node_modules/
+extension/dist/
+*.zip
+
+# MeetMD runtime
+*.wav
+*.mp3
+*.m4a
+.meetmd/
+config.local.yaml
+
+# Whisper models (baixados localmente)
+models/
+*.bin
+*.gguf
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Claude temp
+docs/claude/tmp/
+scripts/claude/tmp/
+
+# Planejamento / estratégia / segredos de negócio — NÃO versionar.
+# Roadmap, monetização e afins moram aqui e ficam fora do repo (só código
+# e referências técnicas base são versionados).
+docs/private/
+*.private.md
