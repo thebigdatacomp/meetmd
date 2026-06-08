@@ -39,6 +39,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var detectedTitle = ""
 
     private var dismissedCode: String? // meeting the user declined to record
+    private var lastProject = ""       // remembered across prompts
     private var promptShowing = false
     private var triedLaunch = false
 
@@ -121,11 +122,18 @@ final class AppController: NSObject, NSApplicationDelegate {
             : "Começar a gravar “\(detectedTitle)”?"
         alert.addButton(withTitle: "Gravar")
         alert.addButton(withTitle: "Agora não")
+
+        let projectField = textField(placeholder: "Projeto (opcional)", value: lastProject)
+        alert.accessoryView = projectField
+        alert.window.initialFirstResponder = projectField
+
         let response = alert.runModal()
         promptShowing = false
 
         if response == .alertFirstButtonReturn {
-            startMeeting(title: detectedTitle)
+            lastProject = projectField.stringValue
+            startSession(title: detectedTitle, project: projectField.stringValue,
+                         platform: "google-meet", failCode: code)
         } else {
             dismissedCode = code
         }
@@ -134,15 +142,40 @@ final class AppController: NSObject, NSApplicationDelegate {
     // --- actions ------------------------------------------------------------
 
     @objc private func startManual() {
-        request("POST", "/sessions/start", body: ["title": "Gravação manual", "platform": "manual"]) { [weak self] _, _ in
-            self?.poll()
+        guard let input = promptStartInput() else { return }
+        let title = input.title.isEmpty ? "Gravação manual" : input.title
+        startSession(title: title, project: input.project, platform: "manual")
+    }
+
+    // startSession posts a start request and surfaces any error. failCode, when
+    // set, marks a detected meeting as dismissed so a failure doesn't re-prompt.
+    private func startSession(title: String, project: String, platform: String, failCode: String? = nil) {
+        request("POST", "/sessions/start",
+                body: ["title": title, "project": project, "platform": platform]) { [weak self] data, ok in
+            guard let self = self else { return }
+            if !ok {
+                if let code = failCode { self.dismissedCode = code }
+                let message = self.errorMessage(from: data) ?? "Falha ao iniciar a gravação."
+                DispatchQueue.main.async { self.showError(message) }
+            }
+            self.poll()
         }
     }
 
-    private func startMeeting(title: String) {
-        request("POST", "/sessions/start", body: ["title": title, "platform": "google-meet"]) { [weak self] _, _ in
-            self?.poll()
-        }
+    private func errorMessage(from data: Data?) -> String? {
+        guard let data = data,
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        return obj["message"] as? String
+    }
+
+    private func showError(_ message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "MeetMD"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc private func pause() { post("/sessions/\(sessionID ?? "")/pause") }
@@ -159,11 +192,41 @@ final class AppController: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(URL(fileURLWithPath: outputRoot))
     }
 
-    @objc private func openPanel() {
-        if let url = URL(string: Bridge.base) { NSWorkspace.shared.open(url) }
+    @objc private func quit() { NSApp.terminate(nil) }
+
+    // promptStartInput asks for a title and project before a manual recording.
+    // Returns nil if the user cancels.
+    private func promptStartInput() -> (title: String, project: String)? {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Iniciar gravação"
+        alert.informativeText = "Título e projeto (opcionais)."
+        alert.addButton(withTitle: "Iniciar")
+        alert.addButton(withTitle: "Cancelar")
+
+        let width: CGFloat = 240
+        let titleField = textField(placeholder: "Título", value: "")
+        titleField.frame = NSRect(x: 0, y: 30, width: width, height: 24)
+        let projectField = textField(placeholder: "Projeto", value: lastProject)
+        projectField.frame = NSRect(x: 0, y: 0, width: width, height: 24)
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 54))
+        container.addSubview(titleField)
+        container.addSubview(projectField)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = titleField
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        lastProject = projectField.stringValue
+        return (titleField.stringValue, projectField.stringValue)
     }
 
-    @objc private func quit() { NSApp.terminate(nil) }
+    private func textField(placeholder: String, value: String) -> NSTextField {
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = placeholder
+        field.stringValue = value
+        return field
+    }
 
     // --- menu ---------------------------------------------------------------
 
@@ -184,7 +247,6 @@ final class AppController: NSObject, NSApplicationDelegate {
                 menu.addItem(item("Parar e salvar", #selector(stop), "s"))
             }
             menu.addItem(item("Abrir pasta dos arquivos", #selector(openFolder), "f"))
-            menu.addItem(item("Abrir painel…", #selector(openPanel), "o"))
         }
         menu.addItem(.separator())
         menu.addItem(item("Sair", #selector(quit), "q"))

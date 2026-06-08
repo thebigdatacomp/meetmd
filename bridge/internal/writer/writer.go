@@ -97,7 +97,7 @@ func renderTranscript(m model.Meeting, segments []model.Segment) string {
 	b.WriteString(frontmatter(m, "transcript", ""))
 	fmt.Fprintf(&b, "# Transcrição — %s\n\n", titleOrFallback(m))
 	if len(segments) == 0 {
-		b.WriteString("_(transcrição vazia — captura/transcrição ainda não implementada)_\n")
+		b.WriteString("_(sem fala detectada — nenhum áudio audível durante a gravação)_\n")
 		return b.String()
 	}
 	for _, s := range segments {
