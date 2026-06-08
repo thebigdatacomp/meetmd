@@ -64,12 +64,17 @@ type Status struct {
 	OutputRoot string           `json:"outputRoot"`
 }
 
+// TranscriberFor builds a transcriber from the current config. It is called per
+// recording so config changes (model, language, VAD) take effect without a
+// restart — see config hot-reload.
+type TranscriberFor func(config.Config) transcribe.Transcriber
+
 // Manager owns the single active session and its dependencies.
 type Manager struct {
-	cfg         config.Config
-	capturer    audio.Capturer
-	transcriber transcribe.Transcriber
-	now         func() time.Time // injectable clock for tests
+	store          *config.Store
+	capturer       audio.Capturer
+	newTranscriber TranscriberFor
+	now            func() time.Time // injectable clock for tests
 
 	mu         sync.Mutex
 	current    *model.Meeting
@@ -78,19 +83,20 @@ type Manager struct {
 	detected   *DetectedMeeting
 }
 
-// New builds a Manager from its dependencies.
-func New(cfg config.Config, capturer audio.Capturer, transcriber transcribe.Transcriber) *Manager {
+// New builds a Manager from its dependencies. The config Store is read live so
+// transcription/output settings can be hot-reloaded.
+func New(store *config.Store, capturer audio.Capturer, newTranscriber TranscriberFor) *Manager {
 	return &Manager{
-		cfg:         cfg,
-		capturer:    capturer,
-		transcriber: transcriber,
-		now:         time.Now,
+		store:          store,
+		capturer:       capturer,
+		newTranscriber: newTranscriber,
+		now:            time.Now,
 	}
 }
 
 // Start begins a recording and returns the created meeting (with its ID).
 func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, error) {
-	if m.cfg.OutputRoot == "" {
+	if m.store.Get().OutputRoot == "" {
 		return model.Meeting{}, ErrEmptyOutput
 	}
 	m.mu.Lock()
@@ -147,17 +153,18 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 		m.mu.Unlock()
 	}()
 
+	cfg := m.store.Get() // read live config (hot-reloadable)
 	rec, capErr := m.capturer.Stop()
-	segments, err := m.transcribeRecording(ctx, rec, capErr)
+	segments, err := m.transcribeRecording(ctx, m.newTranscriber(cfg), rec, capErr)
 	if err != nil {
 		return writer.Result{}, err
 	}
 
-	res, err := writer.Write(outputRoot(m.cfg.OutputRoot, meeting.Project), meeting, segments)
+	res, err := writer.Write(outputRoot(cfg.OutputRoot, meeting.Project), meeting, segments)
 	if err != nil {
 		return writer.Result{}, err
 	}
-	if m.cfg.Audio.DeleteWavOnFinish {
+	if cfg.Audio.DeleteWavOnFinish {
 		for _, p := range []string{rec.SystemWav, rec.MicWav} {
 			if p != "" {
 				_ = os.Remove(p)
@@ -181,7 +188,7 @@ func (m *Manager) Cancel(id string) error {
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st := Status{State: StateIdle, OutputRoot: m.cfg.OutputRoot, Detected: m.detected}
+	st := Status{State: StateIdle, OutputRoot: m.store.Get().OutputRoot, Detected: m.detected}
 	switch {
 	case m.current != nil:
 		meeting := *m.current
@@ -294,7 +301,7 @@ func outputRoot(base, project string) string {
 // (system = participants, mic = you), and merges them ordered by start time.
 // The stub capturer reports ErrNotImplemented until real capture exists; that is
 // treated as "no audio" so the pipeline still completes with an empty transcript.
-func (m *Manager) transcribeRecording(ctx context.Context, rec audio.Recording, capErr error) ([]model.Segment, error) {
+func (m *Manager) transcribeRecording(ctx context.Context, transcriber transcribe.Transcriber, rec audio.Recording, capErr error) ([]model.Segment, error) {
 	if errors.Is(capErr, audio.ErrNotImplemented) {
 		return nil, nil
 	}
@@ -322,7 +329,7 @@ func (m *Manager) transcribeRecording(ctx context.Context, rec audio.Recording, 
 		wg.Add(1)
 		go func(i int, wav string, speaker model.Speaker) {
 			defer wg.Done()
-			segs, err := m.transcriber.Transcribe(ctx, wav)
+			segs, err := transcriber.Transcribe(ctx, wav)
 			if err != nil {
 				errs[i] = err
 				return

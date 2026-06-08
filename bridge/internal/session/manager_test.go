@@ -13,7 +13,8 @@ import (
 )
 
 func newTestManager(root string) *Manager {
-	return New(config.Config{OutputRoot: root}, audio.Stub{}, transcribe.Stub{})
+	return New(config.NewStore(config.Config{OutputRoot: root}), audio.Stub{},
+		func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
 }
 
 func TestStopRoutesOutputByProject(t *testing.T) {

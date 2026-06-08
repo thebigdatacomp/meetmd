@@ -77,6 +77,14 @@ func runServe() {
 		log.Fatalf("output root %q: %v", cfg.OutputRoot, err)
 	}
 
+	// Hot-reloadable config: the store is read live; the watcher reloads it when
+	// ~/.meetmd/config.yaml changes (transcription/output settings apply to the
+	// next recording without a restart). Port and audio capture are bound here.
+	store := config.NewStore(cfg)
+	go config.Watch(context.Background(), store, func(config.Config) {
+		log.Printf("config recarregado")
+	})
+
 	// Real OS audio capture (macOS via ScreenCaptureKit; Stub elsewhere).
 	capturer := audio.NewCapturer(audio.Options{
 		HelperPath: cfg.Audio.MacHelperPath,
@@ -84,18 +92,27 @@ func runServe() {
 		CaptureMic: cfg.Audio.CaptureMic,
 	})
 
-	// Local whisper.cpp transcription (falls back to an empty transcript if the
-	// CLI or model is missing).
-	transcriber, note := transcribe.New(transcribe.Options{
-		Engine:    cfg.Whisper.Engine,
-		BinPath:   cfg.Whisper.BinPath,
-		ModelPath: cfg.Whisper.ModelPath,
-		Language:  cfg.Language,
-		VADModel:  cfg.Whisper.VADModel,
-	})
-	log.Printf("transcrição: %s", note)
+	// Transcriber is built per recording from the live config, so model/language/
+	// VAD changes take effect without a restart. Falls back to an empty
+	// transcript when the CLI or model is missing.
+	newTranscriber := func(c config.Config) transcribe.Transcriber {
+		t, _ := transcribe.New(transcribe.Options{
+			Engine:    c.Whisper.Engine,
+			BinPath:   c.Whisper.BinPath,
+			ModelPath: c.Whisper.ModelPath,
+			Language:  c.Language,
+			VADModel:  c.Whisper.VADModel,
+		})
+		return t
+	}
+	if _, note := transcribe.New(transcribe.Options{
+		Engine: cfg.Whisper.Engine, BinPath: cfg.Whisper.BinPath,
+		ModelPath: cfg.Whisper.ModelPath, Language: cfg.Language, VADModel: cfg.Whisper.VADModel,
+	}); note != "" {
+		log.Printf("transcrição: %s", note)
+	}
 
-	mgr := session.New(cfg, capturer, transcriber)
+	mgr := session.New(store, capturer, newTranscriber)
 
 	// Auto-detect meetings in the browser (macOS/Safari) and drive start/stop.
 	if cfg.AutoDetect.Enabled {

@@ -15,7 +15,8 @@ import (
 
 func newManager(t *testing.T) *session.Manager {
 	t.Helper()
-	return session.New(config.Config{OutputRoot: t.TempDir()}, audio.Stub{}, transcribe.Stub{})
+	return session.New(config.NewStore(config.Config{OutputRoot: t.TempDir()}), audio.Stub{},
+		func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
 }
 
 const meetCodeSample = "abc-defg-hij"
