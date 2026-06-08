@@ -34,9 +34,10 @@ var (
 type State string
 
 const (
-	StateIdle      State = "idle"
-	StateRecording State = "recording"
-	StatePaused    State = "paused"
+	StateIdle       State = "idle"
+	StateRecording  State = "recording"
+	StatePaused     State = "paused"
+	StateProcessing State = "processing" // stopped; transcribing/writing
 )
 
 // DetectedMeeting is a meeting found in the browser but not yet being recorded;
@@ -70,10 +71,11 @@ type Manager struct {
 	transcriber transcribe.Transcriber
 	now         func() time.Time // injectable clock for tests
 
-	mu       sync.Mutex
-	current  *model.Meeting
-	paused   bool
-	detected *DetectedMeeting
+	mu         sync.Mutex
+	current    *model.Meeting
+	paused     bool
+	processing bool // stopped, running transcription/write (lock not held meanwhile)
+	detected   *DetectedMeeting
 }
 
 // New builds a Manager from its dependencies.
@@ -124,19 +126,30 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, e
 }
 
 // Stop ends the active recording, transcribes it, and writes the output.
+//
+// The slow work (capture finalize + transcription + write) runs WITHOUT holding
+// the lock, so Status() stays responsive — otherwise the UI would freeze on the
+// last state (e.g. the icon stuck on "recording") for the whole transcription.
 func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	meeting, err := m.takeCurrent(id)
 	if err != nil {
+		m.mu.Unlock()
 		return writer.Result{}, err
 	}
 	meeting.EndedAt = m.now()
+	m.processing = true
+	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		m.processing = false
+		m.mu.Unlock()
+	}()
 
 	rec, capErr := m.capturer.Stop()
 	segments, err := m.transcribeRecording(ctx, rec, capErr)
 	if err != nil {
-		m.current = &meeting // keep session so the caller can retry/cancel
 		return writer.Result{}, err
 	}
 
@@ -169,13 +182,16 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := Status{State: StateIdle, OutputRoot: m.cfg.OutputRoot, Detected: m.detected}
-	if m.current != nil {
+	switch {
+	case m.current != nil:
 		meeting := *m.current
 		st.Meeting = &meeting
 		st.State = StateRecording
 		if m.paused {
 			st.State = StatePaused
 		}
+	case m.processing:
+		st.State = StateProcessing
 	}
 	return st
 }

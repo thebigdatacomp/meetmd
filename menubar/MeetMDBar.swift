@@ -18,12 +18,13 @@ private enum Bridge {
 private enum Glyph {
     static let recording = "🔴"
     static let paused = "⏸"
+    static let processing = "⏳"
     static let idle = "🎙"
     static let offline = "⚠︎"
 }
 
 private enum State: String {
-    case idle, recording, paused
+    case idle, recording, paused, processing
 }
 
 final class AppController: NSObject, NSApplicationDelegate {
@@ -102,6 +103,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         case (false, _): glyph = Glyph.offline
         case (_, .recording): glyph = Glyph.recording
         case (_, .paused): glyph = Glyph.paused
+        case (_, .processing): glyph = Glyph.processing
         default: glyph = Glyph.idle
         }
         statusItem.button?.title = glyph
@@ -245,6 +247,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             case .paused:
                 menu.addItem(item("Retomar", #selector(resume), "p"))
                 menu.addItem(item("Parar e salvar", #selector(stop), "s"))
+            case .processing:
+                break // transcrevendo — sem ações
             }
             menu.addItem(item("Abrir pasta dos arquivos", #selector(openFolder), "f"))
         }
@@ -258,6 +262,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         switch state {
         case .recording: return "Gravando: " + displayTitle()
         case .paused: return "Pausado: " + displayTitle()
+        case .processing: return "Processando…"
         case .idle: return "Pronto"
         }
     }

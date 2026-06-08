@@ -18,6 +18,13 @@ function render(status) {
   const meeting = status.meeting || {};
   recordingId = active ? meeting.ID || null : null;
 
+  if (status.state === "processing") {
+    $("state").textContent = "⏳ Processando…";
+    show("info", false);
+    ["start", "pause", "resume", "stop", "cancel"].forEach((id) => show(id, false));
+    return;
+  }
+
   if (active) {
     $("state").textContent = paused ? "⏸ Pausado" : "🔴 Gravando";
     $("info").textContent = [meeting.Project, meeting.Title].filter(Boolean).join(" · ") || "sem título";

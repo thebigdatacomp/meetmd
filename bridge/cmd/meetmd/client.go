@@ -105,6 +105,8 @@ func runStatus() {
 		fmt.Printf("● gravando: %s\n", titleOr(meeting.Title))
 	case state == statePaused && meeting != nil:
 		fmt.Printf("⏸ pausado: %s\n", titleOr(meeting.Title))
+	case state == stateProcessing:
+		fmt.Println("⏳ processando…")
 	default:
 		fmt.Println("○ ocioso")
 	}
@@ -114,8 +116,9 @@ func runStatus() {
 
 // State strings mirror session.State* without importing the package.
 const (
-	stateRecording = "recording"
-	statePaused    = "paused"
+	stateRecording  = "recording"
+	statePaused     = "paused"
+	stateProcessing = "processing"
 )
 
 type statusMeeting struct {
