@@ -24,21 +24,19 @@ private enum State: String {
 private enum ClaudeIcon {
     private static let cols = 16
     private static let sprite = [
-        "....XXXXXXXX....",
         "..XXXXXXXXXXXX..",
         ".XXXXXXXXXXXXXX.",
         ".XXXXXXXXXXXXXX.",
-        "XXXXXXXXXXXXXXXX",
-        "XXXXXXXXXXXXXXXX",
+        ".XXXXXXXXXXXXXX.",
+        ".XXXXXXXXXXXXXX.",
+        ".XXXXXXXXXXXXXX.",
         "XXXeXXXXXXXXeXXX",
         "XXXXeXXXXXXeXXXX",
-        "XXXeXXXXXXXXeXXX",
-        "XXXXXXXXXXXXXXXX",
-        "XXXXXXXXXXXXXXXX",
+        ".XXeXXXXXXXXeXX.",
         ".XXXXXXXXXXXXXX.",
         ".XXXXXXXXXXXXXX.",
-        "XXX.XX.XXXX.XX.X",
-        "XX..XX..XX..XX..",
+        "..XX.XX..XX.XX..",
+        "..XX.XX..XX.XX..",
     ]
     private static let orange = NSColor(red: 0.85, green: 0.46, blue: 0.34, alpha: 1)
     private static let gray = NSColor(white: 0.55, alpha: 1)
@@ -46,7 +44,7 @@ private enum ClaudeIcon {
 
     static func image(for state: State, online: Bool) -> NSImage {
         let img = NSImage(size: NSSize(width: 22, height: 20), flipped: false) { _ in
-            let area = NSRect(x: 1, y: 1, width: 20, height: 18) // top room for the bubble
+            let area = NSRect(x: 1, y: 1, width: 20, height: 16.25) // square cells; room for the bubble
             let body = online ? orange : gray
             let showEyes = !(online && state == .paused) // paused: bars only, no eyes
             creature(in: area, body: body, eyes: showEyes)
@@ -85,22 +83,21 @@ private enum ClaudeIcon {
 
     private static func headphones(in r: NSRect) {
         NSColor.white.setFill()
-        for x in 4...11 { px(x, 0, r).fill() }
+        for x in 3...12 { px(x, 0, r).fill() }
         for x in 2...13 { px(x, 1, r).fill() }
-        for y in 5...10 {
+        for y in 5...9 {
             px(0, y, r).fill(); px(1, y, r).fill(); px(14, y, r).fill(); px(15, y, r).fill()
         }
-        for y in 9...11 { px(0, y, r).fill(); px(15, y, r).fill() }
     }
 
     private static func pauseBars(in r: NSRect) {
         dark.setFill()
-        for y in 5...12 { px(6, y, r).fill(); px(7, y, r).fill(); px(9, y, r).fill(); px(10, y, r).fill() }
+        for y in 3...10 { px(6, y, r).fill(); px(7, y, r).fill(); px(9, y, r).fill(); px(10, y, r).fill() }
     }
 
     private static func bubble(in r: NSRect) {
         let c = cell(r)
-        let bx = r.minX + c * 9.5, by = r.minY + r.height - c * 5.5
+        let bx = r.minX + c * 9.5, by = r.minY + r.height - c * 5.0
         let box = NSRect(x: bx, y: by, width: c * 6.5, height: c * 4)
         let path = NSBezierPath(roundedRect: box, xRadius: c * 1.2, yRadius: c * 1.2)
         let tail = NSBezierPath()
