@@ -99,11 +99,25 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> assinatura ad-hoc, de dentro pra fora (identidade estável p/ TCC)"
-codesign --force --sign - "$MACOS/meetmd-bridge"
-codesign --force --sign - "$MACOS/whisper-cli"
-codesign --force --sign - "$MACOS/system-audio-recorder"
-codesign --force --sign - "$APP" # assina o executável principal e sela o bundle
+# Identidade de assinatura: usa o cert self-signed estável "MeetMD Dev" se existir
+# (rode menubar/setup-dev-cert.sh uma vez) — as permissões TCC colam entre rebuilds.
+# Sem o cert, cai pra ad-hoc: a identidade muda a cada rebuild e o macOS invalida
+# as permissões (Gravação de Tela, Microfone, Automação), exigindo reconcessão.
+DEV_KEYCHAIN="$HOME/Library/Keychains/meetmd-codesign.keychain-db"
+DEV_IDENTITY="MeetMD Dev"
+SIGN_ARGS=(--force --sign -)
+if security find-identity -p codesigning "$DEV_KEYCHAIN" 2>/dev/null | grep -q "$DEV_IDENTITY"; then
+	security unlock-keychain -p meetmd-dev "$DEV_KEYCHAIN" 2>/dev/null || true
+	SIGN_ARGS=(--force --sign "$DEV_IDENTITY" --keychain "$DEV_KEYCHAIN")
+	echo "==> assinando com '$DEV_IDENTITY' (identidade estável p/ TCC), de dentro pra fora"
+else
+	echo "==> assinatura ad-hoc, de dentro pra fora (rode setup-dev-cert.sh p/ permissões estáveis)"
+fi
+# Ordem inside-out: helpers primeiro, o .app por último (assina o principal e sela o bundle).
+codesign "${SIGN_ARGS[@]}" "$MACOS/meetmd-bridge"
+codesign "${SIGN_ARGS[@]}" "$MACOS/whisper-cli"
+codesign "${SIGN_ARGS[@]}" "$MACOS/system-audio-recorder"
+codesign "${SIGN_ARGS[@]}" "$APP"
 
 echo "==> verificando"
 codesign --verify --verbose "$APP" 2>&1 | sed 's/^/   /'
