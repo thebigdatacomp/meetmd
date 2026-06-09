@@ -42,9 +42,10 @@ private enum ClaudeIcon {
     private static let gray = NSColor(white: 0.55, alpha: 1)
     private static let dark = NSColor(white: 0.12, alpha: 1)
 
-    static func image(for state: State, online: Bool) -> NSImage {
-        let img = NSImage(size: NSSize(width: 22, height: 20), flipped: false) { _ in
-            let area = NSRect(x: 1, y: 1, width: 20, height: 16.25) // square cells; room for the bubble
+    static func image(for state: State, online: Bool, height: CGFloat = 20) -> NSImage {
+        let s = height / 20 // scale (base canvas is 22×20)
+        let img = NSImage(size: NSSize(width: 22 * s, height: height), flipped: false) { _ in
+            let area = NSRect(x: 1 * s, y: 1 * s, width: 20 * s, height: 16.25 * s) // square cells; room for the bubble
             let body = online ? orange : gray
             let showEyes = !(online && state == .paused) // paused: bars only, no eyes
             creature(in: area, body: body, eyes: showEyes)
@@ -69,30 +70,41 @@ private enum ClaudeIcon {
         return NSRect(x: r.minX + CGFloat(x) * c, y: r.minY + r.height - CGFloat(y + 1) * c, width: c, height: c)
     }
 
-    private static func creature(in r: NSRect, body: NSColor, eyes: Bool) {
+    // fillCells unites all matching cells into one path and fills once, so the
+    // body renders solid (no seams between the pixel rects).
+    private static func fillCells(in r: NSRect, where keep: (Character) -> Bool) {
+        let p = NSBezierPath()
         for (y, line) in sprite.enumerated() {
-            for (x, ch) in line.enumerated() {
-                if ch == "X" {
-                    body.setFill(); px(x, y, r).fill()
-                } else if ch == "e", eyes {
-                    dark.setFill(); px(x, y, r).fill()
-                }
+            for (x, ch) in line.enumerated() where keep(ch) {
+                p.appendRect(px(x, y, r))
             }
+        }
+        p.fill()
+    }
+
+    private static func creature(in r: NSRect, body: NSColor, eyes: Bool) {
+        body.setFill()
+        fillCells(in: r) { $0 == "X" }
+        if eyes {
+            dark.setFill()
+            fillCells(in: r) { $0 == "e" }
         }
     }
 
     private static func headphones(in r: NSRect) {
+        let p = NSBezierPath()
+        for x in 3...12 { p.appendRect(px(x, 0, r)) }
+        for x in 2...13 { p.appendRect(px(x, 1, r)) }
+        for y in 5...9 { for x in [0, 1, 14, 15] { p.appendRect(px(x, y, r)) } }
         NSColor.white.setFill()
-        for x in 3...12 { px(x, 0, r).fill() }
-        for x in 2...13 { px(x, 1, r).fill() }
-        for y in 5...9 {
-            px(0, y, r).fill(); px(1, y, r).fill(); px(14, y, r).fill(); px(15, y, r).fill()
-        }
+        p.fill()
     }
 
     private static func pauseBars(in r: NSRect) {
+        let p = NSBezierPath()
+        for y in 3...10 { for x in [6, 7, 9, 10] { p.appendRect(px(x, y, r)) } }
         dark.setFill()
-        for y in 3...10 { px(6, y, r).fill(); px(7, y, r).fill(); px(9, y, r).fill(); px(10, y, r).fill() }
+        p.fill()
     }
 
     private static func bubble(in r: NSRect) {
@@ -297,7 +309,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         máquina. Reuniões do Google Meet no Safari são detectadas \
         automaticamente; ou grave manualmente pelo menu.
         """
-        alert.icon = NSImage(systemSymbolName: "mic.circle.fill", accessibilityDescription: "MeetMD")
+        alert.icon = ClaudeIcon.image(for: .recording, online: true, height: 76) // mascote gravando
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
