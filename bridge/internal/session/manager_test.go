@@ -66,11 +66,11 @@ func TestStopNoProjectUsesRoot(t *testing.T) {
 
 func TestSanitizeProject(t *testing.T) {
 	cases := map[string]string{
-		"Bora":          "bora",
-		"Meu Projeto":   "meu-projeto",
-		"../etc":        "etc",
-		"a/b/c":         "a-b-c",
-		"  Bonavia  ":   "bonavia",
+		"Bora":        "bora",
+		"Meu Projeto": "meu-projeto",
+		"../etc":      "etc",
+		"a/b/c":       "a-b-c",
+		"  Bonavia  ": "bonavia",
 	}
 	for in, want := range cases {
 		if got := sanitizeProject(in); got != want {

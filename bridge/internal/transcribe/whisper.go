@@ -39,8 +39,8 @@ func (w Whisper) Transcribe(ctx context.Context, wavPath string) ([]model.Segmen
 		"-f", wavPath,
 		"-l", lang,
 		"-mc", "0", // no context carryover → avoids repetition-loop hallucinations
-		"-sns",     // suppress non-speech tokens ([Música], (speaking...), etc.)
-		"-oj",        // emit JSON with timestamps
+		"-sns",         // suppress non-speech tokens ([Música], (speaking...), etc.)
+		"-oj",          // emit JSON with timestamps
 		"-of", outBase, // output file base (whisper appends .json)
 	}
 	// VAD (when a model is available) skips non-speech audio, which kills the

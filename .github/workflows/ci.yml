@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go — lint, test, build (linux)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: bridge/go.sum
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Arquivos não formatados (rode 'gofmt -w .'):"; echo "$unformatted"; exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./...
+
+  cross-compile:
+    name: Cross-compile ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bridge
+    strategy:
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: bridge/go.sum
+      - name: go build (${{ matrix.goos }})
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+  macos:
+    name: macOS — darwin tests + Swift
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: bridge/go.sum
+      - name: Go test (darwin build tags)
+        working-directory: bridge
+        run: go test ./...
+      - name: Compile audio helper (ScreenCaptureKit)
+        run: swiftc -O spike/macos-audio/SystemAudioRecorder.swift -o /tmp/system-audio-recorder
+      - name: Compile menu-bar app
+        run: swiftc -O menubar/MeetMDBar.swift -framework Cocoa -o /tmp/meetmd-bar
+
+  web:
+    name: Web — extension + UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate manifest JSON
+        run: python3 -c "import json; json.load(open('extension/manifest.json'))"
+      - name: Syntax-check JS
+        run: |
+          set -e
+          for f in extension/lib/*.js extension/content/*.js extension/background/*.js extension/popup/*.js bridge/internal/server/ui/*.js; do
+            echo "checking $f"
+            node --check "$f"
+          done

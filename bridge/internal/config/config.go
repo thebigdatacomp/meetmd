@@ -12,7 +12,7 @@ import (
 
 const (
 	defaultPort     = 8765
-	defaultLanguage = "auto" // detect per recording; pin to "pt"/"en"/... to force
+	defaultLanguage = "auto"  // detect per recording; pin to "pt"/"en"/... to force
 	defaultEngine   = "local" // local | api
 	defaultModel    = "ggml-base.bin"
 	defaultVADModel = "ggml-silero-v5.1.2.bin"

@@ -1,5 +1,7 @@
 # MeetMD
 
+[![CI](https://github.com/thebigdatacomp/meetmd/actions/workflows/ci.yml/badge.svg)](https://github.com/thebigdatacomp/meetmd/actions/workflows/ci.yml)
+
 Captura reuniões e entrega a transcrição **estruturada em Markdown**, pronta para o Claude (ou qualquer LLM) processar — sumarizar, extrair ações, cruzar com outros documentos.
 
 ## Como funciona
