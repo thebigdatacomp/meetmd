@@ -15,16 +15,92 @@ private enum Bridge {
     static let requestTimeout: TimeInterval = 600 // stop triggers transcription
 }
 
-private enum Glyph {
-    static let recording = "🔴"
-    static let paused = "⏸"
-    static let processing = "⏳"
-    static let idle = "🎙"
-    static let offline = "⚠︎"
-}
-
 private enum State: String {
     case idle, recording, paused, processing
+}
+
+// Iron Man helmet (with a headset) drawn as a vector, so it stays crisp at any
+// menu-bar size. State is shown by colour; idle is a template image that adapts
+// to the menu bar's light/dark appearance.
+private enum HelmetIcon {
+    static func image(for state: State, online: Bool) -> NSImage {
+        if !online {
+            return draw(color: .tertiaryLabelColor, template: false)
+        }
+        switch state {
+        case .idle: return draw(color: .black, template: true)
+        case .recording: return draw(color: .systemRed, template: false)
+        case .paused: return draw(color: .systemOrange, template: false)
+        case .processing: return draw(color: .systemBlue, template: false)
+        }
+    }
+
+    private static func draw(color: NSColor, template: Bool) -> NSImage {
+        let img = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { rect in
+            // band first (behind the head), then the helmet + ear cups on top
+            color.setStroke()
+            let band = headband(in: rect)
+            band.lineWidth = rect.width * 0.09
+            band.lineCapStyle = .round
+            band.stroke()
+            color.setFill()
+            helmet(in: rect).fill()
+            earCups(in: rect).fill()
+            return true
+        }
+        img.isTemplate = template
+        return img
+    }
+
+    // p maps a normalized point (0..1) into the drawing rect, with a small pad
+    // so the headband stroke isn't clipped.
+    private static func p(_ nx: CGFloat, _ ny: CGFloat, _ r: NSRect) -> NSPoint {
+        let pad: CGFloat = 1
+        return NSPoint(x: r.minX + pad + nx * (r.width - 2 * pad),
+                       y: r.minY + pad + ny * (r.height - 2 * pad))
+    }
+
+    private static func helmet(in r: NSRect) -> NSBezierPath {
+        let face = NSBezierPath()
+        face.move(to: p(0.50, 0.12, r)) // chin
+        face.curve(to: p(0.77, 0.47, r), controlPoint1: p(0.62, 0.13, r), controlPoint2: p(0.77, 0.30, r))
+        face.curve(to: p(0.73, 0.86, r), controlPoint1: p(0.77, 0.63, r), controlPoint2: p(0.79, 0.78, r))
+        face.curve(to: p(0.50, 0.95, r), controlPoint1: p(0.67, 0.93, r), controlPoint2: p(0.60, 0.95, r))
+        face.curve(to: p(0.27, 0.86, r), controlPoint1: p(0.40, 0.95, r), controlPoint2: p(0.33, 0.93, r))
+        face.curve(to: p(0.23, 0.47, r), controlPoint1: p(0.21, 0.78, r), controlPoint2: p(0.23, 0.63, r))
+        face.curve(to: p(0.50, 0.12, r), controlPoint1: p(0.23, 0.30, r), controlPoint2: p(0.38, 0.13, r))
+        face.close()
+
+        // eye slits + nose seam as even-odd cut-outs
+        eye(face, [p(0.31, 0.62, r), p(0.46, 0.55, r), p(0.46, 0.49, r), p(0.31, 0.54, r)])
+        eye(face, [p(0.69, 0.62, r), p(0.54, 0.55, r), p(0.54, 0.49, r), p(0.69, 0.54, r)])
+        eye(face, [p(0.50, 0.49, r), p(0.487, 0.24, r), p(0.513, 0.24, r)])
+        face.windingRule = .evenOdd
+        return face
+    }
+
+    private static func eye(_ path: NSBezierPath, _ pts: [NSPoint]) {
+        path.move(to: pts[0])
+        pts.dropFirst().forEach { path.line(to: $0) }
+        path.close()
+    }
+
+    private static func headband(in r: NSRect) -> NSBezierPath {
+        let band = NSBezierPath()
+        band.move(to: p(0.13, 0.52, r))
+        band.curve(to: p(0.87, 0.52, r), controlPoint1: p(0.15, 1.04, r), controlPoint2: p(0.85, 1.04, r))
+        return band
+    }
+
+    private static func earCups(in r: NSRect) -> NSBezierPath {
+        let w = r.width * 0.22, h = r.height * 0.40
+        let y = p(0.5, 0.48, r).y - h / 2
+        let left = NSRect(x: p(0.03, 0, r).x, y: y, width: w, height: h)
+        let right = NSRect(x: p(0.97, 0, r).x - w, y: y, width: w, height: h)
+        let cups = NSBezierPath(ovalIn: left)
+        cups.append(NSBezierPath(ovalIn: right))
+        return cups
+    }
 }
 
 final class AppController: NSObject, NSApplicationDelegate {
@@ -47,7 +123,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        statusItem.button?.title = Glyph.offline
+        statusItem.button?.image = HelmetIcon.image(for: .idle, online: false)
+        statusItem.button?.imagePosition = .imageOnly
         rebuildMenu()
         timer = Timer.scheduledTimer(withTimeInterval: Bridge.pollInterval, repeats: true) { [weak self] _ in
             self?.poll()
@@ -99,15 +176,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func updateIcon() {
-        let glyph: String
-        switch (online, state) {
-        case (false, _): glyph = Glyph.offline
-        case (_, .recording): glyph = Glyph.recording
-        case (_, .paused): glyph = Glyph.paused
-        case (_, .processing): glyph = Glyph.processing
-        default: glyph = Glyph.idle
-        }
-        statusItem.button?.title = glyph
+        let button = statusItem.button
+        button?.title = ""
+        button?.image = HelmetIcon.image(for: state, online: online)
+        button?.imagePosition = .imageOnly
     }
 
     // --- prompt on detection ------------------------------------------------
