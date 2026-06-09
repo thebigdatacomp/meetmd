@@ -1,6 +1,7 @@
 // MeetMD menu-bar app: a macOS status-bar client for the local bridge.
 //
-// - Shows recording state in the top bar (🔴 gravando / ⏸ pausado / 🎙 pronto / ⚠︎ offline).
+// - Shows state via the Claude mascot icon (orange idle, +headset recording,
+//   bars paused, speech bubble processing, gray offline).
 // - When the bridge detects a Meet (ask mode), pops up asking whether to record.
 // - Menu: Iniciar · Pausar/Retomar · Parar · Abrir pasta dos arquivos · Sair.
 //
@@ -19,87 +20,102 @@ private enum State: String {
     case idle, recording, paused, processing
 }
 
-// Iron Man helmet (with a headset) drawn as a vector, so it stays crisp at any
-// menu-bar size. State is shown by colour; idle is a template image that adapts
-// to the menu bar's light/dark appearance.
-private enum HelmetIcon {
-    static func image(for state: State, online: Bool) -> NSImage {
-        if !online {
-            return draw(color: .tertiaryLabelColor, template: false)
-        }
-        switch state {
-        case .idle: return draw(color: .black, template: true)
-        case .recording: return draw(color: .systemRed, template: false)
-        case .paused: return draw(color: .systemOrange, template: false)
-        case .processing: return draw(color: .systemBlue, template: false)
-        }
-    }
+// Claude mascot (pixel-art) menu-bar icon, drawn per state (colour-coded).
+private enum ClaudeIcon {
+    private static let cols = 16
+    private static let sprite = [
+        "....XXXXXXXX....",
+        "..XXXXXXXXXXXX..",
+        ".XXXXXXXXXXXXXX.",
+        ".XXXXXXXXXXXXXX.",
+        "XXXXXXXXXXXXXXXX",
+        "XXXXXXXXXXXXXXXX",
+        "XXXeXXXXXXXXeXXX",
+        "XXXXeXXXXXXeXXXX",
+        "XXXeXXXXXXXXeXXX",
+        "XXXXXXXXXXXXXXXX",
+        "XXXXXXXXXXXXXXXX",
+        ".XXXXXXXXXXXXXX.",
+        ".XXXXXXXXXXXXXX.",
+        "XXX.XX.XXXX.XX.X",
+        "XX..XX..XX..XX..",
+    ]
+    private static let orange = NSColor(red: 0.85, green: 0.46, blue: 0.34, alpha: 1)
+    private static let gray = NSColor(white: 0.55, alpha: 1)
+    private static let blue = NSColor(red: 0.18, green: 0.37, blue: 0.55, alpha: 1)
+    private static let dark = NSColor(white: 0.12, alpha: 1)
 
-    private static func draw(color: NSColor, template: Bool) -> NSImage {
-        let img = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { rect in
-            // band first (behind the head), then the helmet + ear cups on top
-            color.setStroke()
-            let band = headband(in: rect)
-            band.lineWidth = rect.width * 0.09
-            band.lineCapStyle = .round
-            band.stroke()
-            color.setFill()
-            helmet(in: rect).fill()
-            earCups(in: rect).fill()
+    static func image(for state: State, online: Bool) -> NSImage {
+        let img = NSImage(size: NSSize(width: 22, height: 20), flipped: false) { _ in
+            let area = NSRect(x: 1, y: 1, width: 20, height: 18) // top room for the bubble
+            let body = online ? orange : gray
+            let showEyes = !(online && state == .paused) // paused: bars only, no eyes
+            creature(in: area, body: body, eyes: showEyes)
+            if online {
+                switch state {
+                case .recording: headphones(in: area)
+                case .paused: pauseBars(in: area)
+                case .processing: bubble(in: area)
+                case .idle: break
+                }
+            }
             return true
         }
-        img.isTemplate = template
+        img.isTemplate = false
         return img
     }
 
-    // p maps a normalized point (0..1) into the drawing rect, with a small pad
-    // so the headband stroke isn't clipped.
-    private static func p(_ nx: CGFloat, _ ny: CGFloat, _ r: NSRect) -> NSPoint {
-        let pad: CGFloat = 1
-        return NSPoint(x: r.minX + pad + nx * (r.width - 2 * pad),
-                       y: r.minY + pad + ny * (r.height - 2 * pad))
+    private static func cell(_ r: NSRect) -> CGFloat { r.width / CGFloat(cols) }
+
+    private static func px(_ x: Int, _ y: Int, _ r: NSRect) -> NSRect {
+        let c = cell(r)
+        return NSRect(x: r.minX + CGFloat(x) * c, y: r.minY + r.height - CGFloat(y + 1) * c, width: c, height: c)
     }
 
-    private static func helmet(in r: NSRect) -> NSBezierPath {
-        let face = NSBezierPath()
-        face.move(to: p(0.50, 0.12, r)) // chin
-        face.curve(to: p(0.77, 0.47, r), controlPoint1: p(0.62, 0.13, r), controlPoint2: p(0.77, 0.30, r))
-        face.curve(to: p(0.73, 0.86, r), controlPoint1: p(0.77, 0.63, r), controlPoint2: p(0.79, 0.78, r))
-        face.curve(to: p(0.50, 0.95, r), controlPoint1: p(0.67, 0.93, r), controlPoint2: p(0.60, 0.95, r))
-        face.curve(to: p(0.27, 0.86, r), controlPoint1: p(0.40, 0.95, r), controlPoint2: p(0.33, 0.93, r))
-        face.curve(to: p(0.23, 0.47, r), controlPoint1: p(0.21, 0.78, r), controlPoint2: p(0.23, 0.63, r))
-        face.curve(to: p(0.50, 0.12, r), controlPoint1: p(0.23, 0.30, r), controlPoint2: p(0.38, 0.13, r))
-        face.close()
-
-        // eye slits + nose seam as even-odd cut-outs
-        eye(face, [p(0.31, 0.62, r), p(0.46, 0.55, r), p(0.46, 0.49, r), p(0.31, 0.54, r)])
-        eye(face, [p(0.69, 0.62, r), p(0.54, 0.55, r), p(0.54, 0.49, r), p(0.69, 0.54, r)])
-        eye(face, [p(0.50, 0.49, r), p(0.487, 0.24, r), p(0.513, 0.24, r)])
-        face.windingRule = .evenOdd
-        return face
+    private static func creature(in r: NSRect, body: NSColor, eyes: Bool) {
+        for (y, line) in sprite.enumerated() {
+            for (x, ch) in line.enumerated() {
+                if ch == "X" {
+                    body.setFill(); px(x, y, r).fill()
+                } else if ch == "e", eyes {
+                    dark.setFill(); px(x, y, r).fill()
+                }
+            }
+        }
     }
 
-    private static func eye(_ path: NSBezierPath, _ pts: [NSPoint]) {
-        path.move(to: pts[0])
-        pts.dropFirst().forEach { path.line(to: $0) }
-        path.close()
+    private static func headphones(in r: NSRect) {
+        NSColor.white.setFill()
+        for x in 4...11 { px(x, 0, r).fill() }
+        for x in 2...13 { px(x, 1, r).fill() }
+        blue.setFill()
+        for y in 5...10 {
+            px(0, y, r).fill(); px(1, y, r).fill(); px(14, y, r).fill(); px(15, y, r).fill()
+        }
+        for y in 9...11 { px(0, y, r).fill(); px(15, y, r).fill() }
     }
 
-    private static func headband(in r: NSRect) -> NSBezierPath {
-        let band = NSBezierPath()
-        band.move(to: p(0.13, 0.52, r))
-        band.curve(to: p(0.87, 0.52, r), controlPoint1: p(0.15, 1.04, r), controlPoint2: p(0.85, 1.04, r))
-        return band
+    private static func pauseBars(in r: NSRect) {
+        dark.setFill()
+        for y in 5...12 { px(6, y, r).fill(); px(7, y, r).fill(); px(9, y, r).fill(); px(10, y, r).fill() }
     }
 
-    private static func earCups(in r: NSRect) -> NSBezierPath {
-        let w = r.width * 0.22, h = r.height * 0.40
-        let y = p(0.5, 0.48, r).y - h / 2
-        let left = NSRect(x: p(0.03, 0, r).x, y: y, width: w, height: h)
-        let right = NSRect(x: p(0.97, 0, r).x - w, y: y, width: w, height: h)
-        let cups = NSBezierPath(ovalIn: left)
-        cups.append(NSBezierPath(ovalIn: right))
-        return cups
+    private static func bubble(in r: NSRect) {
+        let c = cell(r)
+        let bx = r.minX + c * 9.5, by = r.minY + r.height - c * 5.5
+        let box = NSRect(x: bx, y: by, width: c * 6.5, height: c * 4)
+        let path = NSBezierPath(roundedRect: box, xRadius: c * 1.2, yRadius: c * 1.2)
+        let tail = NSBezierPath()
+        tail.move(to: NSPoint(x: bx + c * 1.0, y: by + c * 0.4))
+        tail.line(to: NSPoint(x: bx - c * 0.4, y: by - c * 1.2))
+        tail.line(to: NSPoint(x: bx + c * 2.2, y: by + c * 0.4))
+        tail.close()
+        NSColor.white.setFill(); path.fill(); tail.fill()
+        dark.setStroke(); path.lineWidth = c * 0.6; path.stroke(); tail.lineWidth = c * 0.6; tail.stroke()
+        dark.setFill()
+        for i in 0..<3 {
+            NSRect(x: box.minX + c * 1.2 + CGFloat(i) * c * 1.6, y: box.midY - c * 0.5, width: c, height: c).fill()
+        }
     }
 }
 
@@ -123,7 +139,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        statusItem.button?.image = HelmetIcon.image(for: .idle, online: false)
+        statusItem.button?.image = ClaudeIcon.image(for: .idle, online: false)
         statusItem.button?.imagePosition = .imageOnly
         rebuildMenu()
         timer = Timer.scheduledTimer(withTimeInterval: Bridge.pollInterval, repeats: true) { [weak self] _ in
@@ -178,7 +194,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func updateIcon() {
         let button = statusItem.button
         button?.title = ""
-        button?.image = HelmetIcon.image(for: state, online: online)
+        button?.image = ClaudeIcon.image(for: state, online: online)
         button?.imagePosition = .imageOnly
     }
 
