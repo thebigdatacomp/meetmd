@@ -41,6 +41,22 @@ Detalhes e tradeoffs em [docs/specs/2026-06-08-architecture.md](docs/specs/2026-
 | `bridge/` | Go 1.25 | Captura de áudio (loopback SO), transcrição (whisper.cpp), escrita dos `.md`, HTTP local |
 | `extension/` | WebExtension (MV3) | Detecta Meet, lê título/participantes do DOM, dispara start/stop no bridge |
 
+## Rodar como serviço (macOS)
+
+Em vez de manter um terminal aberto, instale o bridge como LaunchAgent — ele
+inicia no login e reinicia se cair:
+
+```bash
+cd bridge && make build
+./bin/meetmd install     # copia o binário para ~/.meetmd/bin e registra o serviço
+./bin/meetmd uninstall   # remove o serviço
+```
+
+O serviço roda de um caminho estável (`~/.meetmd/bin/meetmd`), então as
+permissões do macOS (Gravação de Tela, Automação, Microfone) ficam coladas.
+Logs em `~/.meetmd/logs/bridge.{out,err}.log`.
+
 ## Status
 
-🚧 Especificação. Ver `docs/specs/`.
+Funcional no macOS (captura + transcrição local + menu-bar + serviço). Windows e
+Linux: capturer de áudio pendente — ver issues `#1`/`#2`.

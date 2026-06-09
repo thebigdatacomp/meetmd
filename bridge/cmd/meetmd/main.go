@@ -41,6 +41,10 @@ func main() {
 		runStatus()
 	case "cancel":
 		runCancel()
+	case "install":
+		runInstall()
+	case "uninstall":
+		runUninstall()
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:
@@ -59,6 +63,8 @@ Uso:
   meetmd stop                      para a gravação e grava os .md
   meetmd status                    mostra o estado do bridge
   meetmd cancel                    aborta a gravação atual
+  meetmd install                   instala o serviço (inicia no login, macOS)
+  meetmd uninstall                 remove o serviço
 
 Exemplos:
   meetmd start -p bora "Daily"
