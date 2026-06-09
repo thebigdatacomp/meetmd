@@ -12,9 +12,9 @@ import (
 
 const (
 	defaultPort     = 8765
-	defaultLanguage = "auto"  // detect per recording; pin to "pt"/"en"/... to force
-	defaultEngine   = "local" // local | api
-	defaultModel    = "ggml-base.bin"
+	defaultLanguage = "auto"           // detect per recording; pin to "pt"/"en"/... to force
+	defaultEngine   = "local"          // local | api
+	defaultModel    = "ggml-small.bin" // alinhado ao modelo bundlado no .app
 	defaultVADModel = "ggml-silero-v5.1.2.bin"
 	defaultInterval = 3     // seconds, auto-detect poll
 	defaultMode     = "ask" // auto-detect: prompt before recording

@@ -6,8 +6,6 @@ package transcribe
 
 import (
 	"context"
-	"os"
-	"os/exec"
 
 	"github.com/thebigdatacomp/meetmd/internal/model"
 )
@@ -40,33 +38,23 @@ func New(o Options) (Transcriber, string) {
 	if o.Engine != EngineLocal {
 		return Stub{}, "transcrição desabilitada (engine != local)"
 	}
-	bin := o.BinPath
+	// Resolve the CLI and models against the config, the .app bundle, then PATH.
+	bin := resolveBin(o.BinPath)
 	if bin == "" {
-		bin = lookupWhisper()
+		return Stub{}, "whisper CLI não encontrado — transcript sairá vazio"
 	}
-	if bin == "" {
-		return Stub{}, "whisper CLI não encontrado no PATH — transcript sairá vazio"
+	model := resolveModel(o.ModelPath)
+	if model == "" {
+		return Stub{}, "modelo whisper não encontrado — transcript sairá vazio"
 	}
-	if _, err := os.Stat(o.ModelPath); err != nil {
-		return Stub{}, "modelo whisper não encontrado em " + o.ModelPath + " — transcript sairá vazio"
-	}
-	w := Whisper{BinPath: bin, ModelPath: o.ModelPath, Language: o.Language, VADModel: o.VADModel}
+	vad := resolveModel(o.VADModel) // optional; empty stays empty
+
+	w := Whisper{BinPath: bin, ModelPath: model, Language: o.Language, VADModel: vad}
 	note := "whisper local: " + bin
-	if o.VADModel != "" {
-		if _, err := os.Stat(o.VADModel); err == nil {
-			note += " (VAD on)"
-		}
+	if vad != "" {
+		note += " (VAD on)"
 	}
 	return w, note
-}
-
-func lookupWhisper() string {
-	for _, name := range whisperBinaries {
-		if p, err := exec.LookPath(name); err == nil {
-			return p
-		}
-	}
-	return ""
 }
 
 // Stub is a placeholder transcriber used until whisper.cpp is wired up (M2).

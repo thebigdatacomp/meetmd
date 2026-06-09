@@ -8,8 +8,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/menubar/MeetMD.app"
 MACOS="$APP/Contents/MacOS"
+RES="$APP/Contents/Resources"
 BUNDLE_ID="com.tbdc.meetmd"
 VERSION="0.1.0"
+
+# whisper.cpp source + models (instalados no pré-requisito do README)
+WHISPER_SRC="${WHISPER_SRC:-$HOME/.meetmd/tools/whisper.cpp}"
+MODELS_DIR="${MODELS_DIR:-$HOME/.meetmd/models}"
+WHISPER_MODEL="${WHISPER_MODEL:-ggml-small.bin}"
+VAD_MODEL="ggml-silero-v5.1.2.bin"
 
 echo "==> limpando $APP"
 rm -rf "$APP"
@@ -30,7 +37,30 @@ echo "==> compilando bridge (Go)"
 # "meetmd" colidiria com o executável principal "MeetMD".
 ( cd "$ROOT/bridge" && go build -ldflags=-linkmode=external -o "$MACOS/meetmd-bridge" ./cmd/meetmd )
 
-for b in MeetMD meetmd-bridge system-audio-recorder; do
+echo "==> whisper.cpp estático + Metal (binário único, autocontido)"
+WHISPER_STATIC="$WHISPER_SRC/build-static"
+if [ ! -x "$WHISPER_STATIC/bin/whisper-cli" ]; then
+	[ -d "$WHISPER_SRC" ] || { echo "ERRO: clone o whisper.cpp em $WHISPER_SRC (ver README)"; exit 1; }
+	echo "    (primeira vez — buildando, leva alguns minutos)"
+	cmake -S "$WHISPER_SRC" -B "$WHISPER_STATIC" -DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
+		-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+		-DGGML_NATIVE=OFF -DWHISPER_BUILD_TESTS=OFF >/dev/null
+	cmake --build "$WHISPER_STATIC" -j --target whisper-cli >/dev/null
+fi
+cp "$WHISPER_STATIC/bin/whisper-cli" "$MACOS/whisper-cli"
+
+echo "==> modelos → Resources/models"
+mkdir -p "$RES/models"
+for m in "$WHISPER_MODEL" "$VAD_MODEL"; do
+	if [ -f "$MODELS_DIR/$m" ]; then
+		cp "$MODELS_DIR/$m" "$RES/models/"
+	else
+		echo "    aviso: modelo $m não encontrado em $MODELS_DIR (ver pré-requisitos)"
+	fi
+done
+
+for b in MeetMD meetmd-bridge whisper-cli system-audio-recorder; do
 	[ -x "$MACOS/$b" ] || { echo "ERRO: binário $b não foi gerado"; exit 1; }
 done
 
@@ -59,6 +89,7 @@ PLIST
 
 echo "==> assinatura ad-hoc, de dentro pra fora (identidade estável p/ TCC)"
 codesign --force --sign - "$MACOS/meetmd-bridge"
+codesign --force --sign - "$MACOS/whisper-cli"
 codesign --force --sign - "$MACOS/system-audio-recorder"
 codesign --force --sign - "$APP" # assina o executável principal e sela o bundle
 
