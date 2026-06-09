@@ -42,7 +42,6 @@ private enum ClaudeIcon {
     ]
     private static let orange = NSColor(red: 0.85, green: 0.46, blue: 0.34, alpha: 1)
     private static let gray = NSColor(white: 0.55, alpha: 1)
-    private static let blue = NSColor(red: 0.18, green: 0.37, blue: 0.55, alpha: 1)
     private static let dark = NSColor(white: 0.12, alpha: 1)
 
     static func image(for state: State, online: Bool) -> NSImage {
@@ -88,7 +87,6 @@ private enum ClaudeIcon {
         NSColor.white.setFill()
         for x in 4...11 { px(x, 0, r).fill() }
         for x in 2...13 { px(x, 1, r).fill() }
-        blue.setFill()
         for y in 5...10 {
             px(0, y, r).fill(); px(1, y, r).fill(); px(14, y, r).fill(); px(15, y, r).fill()
         }
