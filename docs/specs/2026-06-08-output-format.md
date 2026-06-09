@@ -1,8 +1,13 @@
 # MeetMD — Spec do Formato de Output
 
 - **Data:** 2026-06-08
-- **Status:** Proposta
+- **Status:** Implementado
 - **Autor:** Robson Müller
+
+> Implementado conforme a spec, com duas adições: roteamento **por projeto**
+> (`output_root/<projeto>/…`) e o campo `project` no frontmatter de `meeting.md`.
+> Os falantes hoje são `Você` (mic) e `Participantes` (sistema) — diarização por
+> pessoa é futura (#5).
 
 Define a estrutura de arquivos `.md` que o MeetMD grava — o **produto principal** da ferramenta. O formato é otimizado para um LLM (Claude) ler e processar: frontmatter estável, seções previsíveis, links relativos.
 

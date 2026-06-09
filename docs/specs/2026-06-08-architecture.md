@@ -1,8 +1,15 @@
 # MeetMD — Spec de Arquitetura
 
 - **Data:** 2026-06-08
-- **Status:** Proposta
+- **Status:** Implementado (com evoluções)
 - **Autor:** Robson Müller
+
+> Esta spec registra o desenho inicial. O que foi construído evoluiu em alguns
+> pontos — fonte de verdade atual: `CLAUDE.md`. Principais diferenças: a **UI
+> principal é o app de menu-bar** (não a extensão); a detecção no **Safari é via
+> AppleScript** no bridge; whisper.cpp roda **arm64+Metal**; há **diarização
+> Você vs Participantes** (mic em 2º canal), **VAD/anti-alucinação**, **hot-reload**
+> de config e **serviço LaunchAgent** (com ressalva de permissões TCC — ver #3/#4).
 
 ## 1. Objetivo
 
