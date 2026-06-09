@@ -410,6 +410,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         var candidates: [String] = []
         if let env = ProcessInfo.processInfo.environment["MEETMD_BIN"] { candidates.append(env) }
         let selfDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        candidates.append(selfDir.appendingPathComponent("meetmd-bridge").path) // bundled (.app)
         candidates.append(selfDir.appendingPathComponent("meetmd").path)
         candidates.append("/usr/local/bin/meetmd")
         candidates.append("/opt/homebrew/bin/meetmd")

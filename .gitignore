@@ -40,3 +40,6 @@ scripts/claude/tmp/
 # e referências técnicas base são versionados).
 docs/private/
 *.private.md
+
+# .app bundle (artefato de build)
+menubar/MeetMD.app/

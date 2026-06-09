@@ -139,14 +139,20 @@ func (c *macCapturer) Cancel() error {
 	return nil
 }
 
-// resolveHelper locates the capture helper binary from a configured path,
-// falling back to PATH.
+// resolveHelper locates the capture helper binary: a configured path, then a
+// sibling of the bridge executable (so it works inside a .app bundle), then PATH.
 func resolveHelper(configured string) (string, error) {
 	if configured != "" {
 		if _, err := os.Stat(configured); err != nil {
 			return "", fmt.Errorf("audio helper not found at %s: %w", configured, err)
 		}
 		return configured, nil
+	}
+	if exe, err := os.Executable(); err == nil {
+		sibling := filepath.Join(filepath.Dir(exe), helperName)
+		if _, err := os.Stat(sibling); err == nil {
+			return sibling, nil
+		}
 	}
 	if p, err := exec.LookPath(helperName); err == nil {
 		return p, nil
