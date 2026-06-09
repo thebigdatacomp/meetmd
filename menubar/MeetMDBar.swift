@@ -91,13 +91,38 @@ private enum ClaudeIcon {
         }
     }
 
+    // White headphone cells: an arc band over the head connecting both ear cups.
+    private static let headphoneCells: [(Int, Int)] = [
+        (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), (10, 0), (11, 0), (12, 0),
+        (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (11, 1), (12, 1), (13, 1),
+        (1, 2), (1, 3), (1, 4), (14, 2), (14, 3), (14, 4),
+        (0, 5), (1, 5), (0, 6), (1, 6), (0, 7), (1, 7), (0, 8), (1, 8), (0, 9), (1, 9),
+        (14, 5), (15, 5), (14, 6), (15, 6), (14, 7), (15, 7), (14, 8), (15, 8), (14, 9), (15, 9),
+    ]
+
     private static func headphones(in r: NSRect) {
-        let p = NSBezierPath()
-        for x in 3...12 { p.appendRect(px(x, 0, r)) }
-        for x in 2...13 { p.appendRect(px(x, 1, r)) }
-        for y in 5...9 { for x in [0, 1, 14, 15] { p.appendRect(px(x, y, r)) } }
+        // thin black outline (the 1-cell border around the white headphone)
+        let white = Set(headphoneCells.map { "\($0.0),\($0.1)" })
+        var seen = Set<String>()
+        let outline = NSBezierPath()
+        for (x, y) in headphoneCells {
+            for dx in -1...1 {
+                for dy in -1...1 where !(dx == 0 && dy == 0) {
+                    let nx = x + dx, ny = y + dy, key = "\(nx),\(ny)"
+                    if !white.contains(key), !seen.contains(key) {
+                        seen.insert(key)
+                        outline.appendRect(px(nx, ny, r))
+                    }
+                }
+            }
+        }
+        dark.setFill()
+        outline.fill()
+
+        let band = NSBezierPath()
+        for (x, y) in headphoneCells { band.appendRect(px(x, y, r)) }
         NSColor.white.setFill()
-        p.fill()
+        band.fill()
     }
 
     private static func pauseBars(in r: NSRect) {
