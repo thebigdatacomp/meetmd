@@ -43,17 +43,18 @@ type Result struct {
 // Write renders a meeting and its transcript into outputRoot and refreshes
 // INDEX.md. It is idempotent: writing the same meeting ID again overwrites its
 // files and updates (not duplicates) its index row.
-func Write(outputRoot string, m model.Meeting, segments []model.Segment) (Result, error) {
+func Write(outputRoot string, m model.Meeting, segments []model.Segment, lang string) (Result, error) {
 	dir := filepath.Join(outputRoot, m.DirName())
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return Result{}, fmt.Errorf("create session dir: %w", err)
 	}
 
+	t := textsFor(lang)
 	files := map[string]string{
-		FileMeeting:    renderMeeting(m),
-		FileTranscript: renderTranscript(m, segments),
-		FileSummary:    renderSummary(m),
-		FileActions:    renderActions(m),
+		FileMeeting:    renderMeeting(m, t),
+		FileTranscript: renderTranscript(m, segments, t),
+		FileSummary:    renderSummary(m, t),
+		FileActions:    renderActions(m, t),
 	}
 	written := make([]string, 0, len(files))
 	for name, content := range files {
@@ -64,7 +65,7 @@ func Write(outputRoot string, m model.Meeting, segments []model.Segment) (Result
 	}
 	sort.Strings(written)
 
-	if err := refreshIndex(outputRoot, m); err != nil {
+	if err := refreshIndex(outputRoot, m, t); err != nil {
 		return Result{}, fmt.Errorf("refresh index: %w", err)
 	}
 	return Result{SessionDir: dir, Files: written}, nil
@@ -72,19 +73,18 @@ func Write(outputRoot string, m model.Meeting, segments []model.Segment) (Result
 
 // --- per-file renderers -----------------------------------------------------
 
-func renderMeeting(m model.Meeting) string {
+func renderMeeting(m model.Meeting, t texts) string {
 	var b strings.Builder
-	b.WriteString(frontmatter(m, "", statusRaw))
-	fmt.Fprintf(&b, "# %s\n\n", titleOrFallback(m))
-	fmt.Fprintf(&b, "> Reunião capturada por MeetMD em %s (%d min).\n\n",
-		m.StartedAt.Format("2006-01-02 15:04"), m.DurationMin())
-	b.WriteString("## Arquivos\n")
-	fmt.Fprintf(&b, "- [Transcrição completa](%s)\n", FileTranscript)
-	fmt.Fprintf(&b, "- [Resumo](%s) — _a preencher_\n", FileSummary)
-	fmt.Fprintf(&b, "- [Ações](%s) — _a preencher_\n\n", FileActions)
-	b.WriteString("## Participantes\n")
+	b.WriteString(frontmatter(m, "", statusRaw, t))
+	fmt.Fprintf(&b, "# %s\n\n", titleOrFallback(m, t))
+	fmt.Fprintf(&b, t.capturedBy, m.StartedAt.Format("2006-01-02 15:04"), m.DurationMin())
+	b.WriteString(t.filesHeading)
+	fmt.Fprintf(&b, t.linkFull, FileTranscript)
+	fmt.Fprintf(&b, t.linkSummary, FileSummary)
+	fmt.Fprintf(&b, t.linkActions, FileActions)
+	b.WriteString(t.participants)
 	if len(m.Participants) == 0 {
-		b.WriteString("- _(não capturados)_\n")
+		b.WriteString(t.notCaptured)
 	}
 	for _, p := range m.Participants {
 		fmt.Fprintf(&b, "- %s\n", p)
@@ -92,51 +92,50 @@ func renderMeeting(m model.Meeting) string {
 	return b.String()
 }
 
-func renderTranscript(m model.Meeting, segments []model.Segment) string {
+func renderTranscript(m model.Meeting, segments []model.Segment, t texts) string {
 	var b strings.Builder
-	b.WriteString(frontmatter(m, "transcript", ""))
-	fmt.Fprintf(&b, "# Transcrição — %s\n\n", titleOrFallback(m))
+	b.WriteString(frontmatter(m, "transcript", "", t))
+	fmt.Fprintf(&b, t.transcriptTitle, titleOrFallback(m, t))
 	if len(segments) == 0 {
-		b.WriteString("_(sem fala detectada — nenhum áudio audível durante a gravação)_\n")
+		b.WriteString(t.noSpeech)
 		return b.String()
 	}
 	for _, s := range segments {
-		fmt.Fprintf(&b, "[%s] %s: %s\n", clock(s.Start), s.Speaker, strings.TrimSpace(s.Text))
+		fmt.Fprintf(&b, "[%s] %s: %s\n", clock(s.Start), speakerLabel(s.Speaker, t), strings.TrimSpace(s.Text))
 	}
 	return b.String()
 }
 
-func renderSummary(m model.Meeting) string {
+func renderSummary(m model.Meeting, t texts) string {
 	var b strings.Builder
-	b.WriteString(frontmatter(m, "summary", statusEmpty))
-	fmt.Fprintf(&b, "# Resumo — %s\n\n", titleOrFallback(m))
-	b.WriteString("<!-- MeetMD: preencha a partir de transcript.md. Remova este comentário ao concluir. -->\n\n")
-	b.WriteString("## TL;DR\n_(2-3 frases)_\n\n")
-	b.WriteString("## Tópicos discutidos\n- \n\n")
-	b.WriteString("## Decisões\n- \n\n")
-	b.WriteString("## Pontos em aberto\n- \n")
+	b.WriteString(frontmatter(m, "summary", statusEmpty, t))
+	fmt.Fprintf(&b, t.summaryTitle, titleOrFallback(m, t))
+	b.WriteString(t.summaryComment)
+	b.WriteString(t.tldr)
+	b.WriteString(t.topics)
+	b.WriteString(t.decisions)
+	b.WriteString(t.openPoints)
 	return b.String()
 }
 
-func renderActions(m model.Meeting) string {
+func renderActions(m model.Meeting, t texts) string {
 	var b strings.Builder
-	b.WriteString(frontmatter(m, "actions", statusEmpty))
-	fmt.Fprintf(&b, "# Ações — %s\n\n", titleOrFallback(m))
-	b.WriteString("<!-- MeetMD: extraia itens de ação de transcript.md. Um por linha. -->\n\n")
-	b.WriteString("| # | Ação | Responsável | Prazo | Status |\n")
-	b.WriteString("|---|------|-------------|-------|--------|\n")
-	b.WriteString("|   |      |             |       | aberto |\n")
+	b.WriteString(frontmatter(m, "actions", statusEmpty, t))
+	fmt.Fprintf(&b, t.actionsTitle, titleOrFallback(m, t))
+	b.WriteString(t.actionsComment)
+	b.WriteString(t.actionsTableHead)
+	b.WriteString(t.actionsTableRow)
 	return b.String()
 }
 
 // --- frontmatter ------------------------------------------------------------
 
 // frontmatter builds the shared YAML block. kind/status are omitted when empty.
-func frontmatter(m model.Meeting, kind, status string) string {
+func frontmatter(m model.Meeting, kind, status string, t texts) string {
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "id: %s\n", m.ID)
-	fmt.Fprintf(&b, "title: %s\n", titleOrFallback(m))
+	fmt.Fprintf(&b, "title: %s\n", titleOrFallback(m, t))
 	fmt.Fprintf(&b, "date: %s\n", m.StartedAt.Format("2006-01-02"))
 	if kind == "" { // full identity only on meeting.md
 		if m.Project != "" {
@@ -176,14 +175,14 @@ type indexEntry struct {
 }
 
 // refreshIndex upserts the meeting into the JSON state and re-renders INDEX.md.
-func refreshIndex(outputRoot string, m model.Meeting) error {
+func refreshIndex(outputRoot string, m model.Meeting, t texts) error {
 	entries, err := loadIndex(outputRoot)
 	if err != nil {
 		return err
 	}
 	entry := indexEntry{
 		ID:          m.ID,
-		Title:       titleOrFallback(m),
+		Title:       titleOrFallback(m, t),
 		Date:        m.StartedAt.Format("2006-01-02"),
 		Start:       m.StartedAt.Format("15:04"),
 		DurationMin: m.DurationMin(),
@@ -214,7 +213,7 @@ func refreshIndex(outputRoot string, m model.Meeting) error {
 	if err := os.WriteFile(filepath.Join(outputRoot, indexState), data, 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(outputRoot, FileIndex), []byte(renderIndex(entries)), 0o644)
+	return os.WriteFile(filepath.Join(outputRoot, FileIndex), []byte(renderIndex(entries, t)), 0o644)
 }
 
 func loadIndex(outputRoot string) ([]indexEntry, error) {
@@ -232,13 +231,12 @@ func loadIndex(outputRoot string) ([]indexEntry, error) {
 	return entries, nil
 }
 
-func renderIndex(entries []indexEntry) string {
+func renderIndex(entries []indexEntry, t texts) string {
 	var b strings.Builder
 	b.WriteString("---\nsource: " + source + "\nkind: index\n")
 	fmt.Fprintf(&b, "updated: %s\n---\n\n", time.Now().Format("2006-01-02"))
-	b.WriteString("# Reuniões — MeetMD\n\n")
-	b.WriteString("| Data | Reunião | Duração | Plataforma | Status |\n")
-	b.WriteString("|------|---------|---------|------------|--------|\n")
+	b.WriteString(t.indexTitle)
+	b.WriteString(t.indexTableHead)
 	for _, e := range entries {
 		link := fmt.Sprintf("[%s](%s/%s)", e.Title, e.Dir, FileMeeting)
 		fmt.Fprintf(&b, "| %s %s | %s | %d min | %s | %s |\n",
@@ -249,13 +247,23 @@ func renderIndex(entries []indexEntry) string {
 
 // --- helpers ----------------------------------------------------------------
 
-const titleFallback = "Reunião sem título"
-
-func titleOrFallback(m model.Meeting) string {
+func titleOrFallback(m model.Meeting, t texts) string {
 	if strings.TrimSpace(m.Title) == "" {
-		return titleFallback
+		return t.titleFallback
 	}
 	return m.Title
+}
+
+// speakerLabel renders the localized display name for a diarization speaker.
+func speakerLabel(s model.Speaker, t texts) string {
+	switch s {
+	case model.SpeakerYou:
+		return t.speakerYou
+	case model.SpeakerOthers:
+		return t.speakerOthers
+	default:
+		return string(s)
+	}
 }
 
 // clock formats a duration as hh:mm:ss.

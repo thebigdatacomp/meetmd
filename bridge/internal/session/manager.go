@@ -62,6 +62,7 @@ type Status struct {
 	Meeting    *model.Meeting   `json:"meeting,omitempty"`
 	Detected   *DetectedMeeting `json:"detected,omitempty"`
 	OutputRoot string           `json:"outputRoot"`
+	UILanguage string           `json:"uiLanguage"` // resolved UI language ("pt"/"en")
 }
 
 // TranscriberFor builds a transcriber from the current config. It is called per
@@ -160,7 +161,7 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 		return writer.Result{}, err
 	}
 
-	res, err := writer.Write(outputRoot(cfg.OutputRoot, meeting.Project), meeting, segments)
+	res, err := writer.Write(outputRoot(cfg.OutputRoot, meeting.Project), meeting, segments, cfg.ResolvedUILang())
 	if err != nil {
 		return writer.Result{}, err
 	}
@@ -188,7 +189,8 @@ func (m *Manager) Cancel(id string) error {
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st := Status{State: StateIdle, OutputRoot: m.store.Get().OutputRoot, Detected: m.detected}
+	cfg := m.store.Get()
+	st := Status{State: StateIdle, OutputRoot: cfg.OutputRoot, UILanguage: cfg.ResolvedUILang(), Detected: m.detected}
 	switch {
 	case m.current != nil:
 		meeting := *m.current

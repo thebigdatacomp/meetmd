@@ -20,7 +20,8 @@ const (
 // settingsDTO is the user-facing subset of the config (no internal paths).
 type settingsDTO struct {
 	OutputRoot     string `json:"outputRoot"`
-	Language       string `json:"language"`       // auto | pt | es | en | ...
+	Language       string `json:"language"`       // whisper transcription: auto | pt | es | en | ...
+	UILanguage     string `json:"uiLanguage"`     // UI + .md output: auto | pt | en
 	DefaultProject string `json:"defaultProject"` // project for auto-detected meetings
 	AutoDetect     string `json:"autoDetect"`     // off | ask | auto
 	CaptureMic     bool   `json:"captureMic"`     // include the user's mic
@@ -73,6 +74,7 @@ func toDTO(cfg config.Config) settingsDTO {
 	return settingsDTO{
 		OutputRoot:     cfg.OutputRoot,
 		Language:       cfg.Language,
+		UILanguage:     cfg.UILanguage,
 		DefaultProject: cfg.AutoDetect.Project,
 		AutoDetect:     auto,
 		CaptureMic:     cfg.Audio.CaptureMic,
@@ -85,6 +87,9 @@ func toDTO(cfg config.Config) settingsDTO {
 func applyDTO(cfg config.Config, dto settingsDTO) config.Config {
 	cfg.OutputRoot = strings.TrimSpace(dto.OutputRoot)
 	cfg.Language = strings.TrimSpace(dto.Language)
+	if ui := strings.TrimSpace(dto.UILanguage); ui != "" {
+		cfg.UILanguage = ui
+	}
 	cfg.AutoDetect.Project = strings.TrimSpace(dto.DefaultProject)
 	cfg.Audio.CaptureMic = dto.CaptureMic
 	cfg.Audio.DeleteWavOnFinish = dto.DeleteAudio

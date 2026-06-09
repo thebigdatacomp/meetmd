@@ -20,6 +20,18 @@ private enum State: String {
     case idle, recording, paused, processing
 }
 
+// UI language for menus, prompts and labels. Defaults to the OS preference and
+// is overridden by the bridge's resolved `uiLanguage` (which honors the
+// ui_language config). English is the fallback for anything non-Portuguese.
+private enum UILang { case pt, en }
+
+private var gUILang: UILang =
+    (Locale.preferredLanguages.first ?? "en").lowercased().hasPrefix("pt") ? .pt : .en
+
+// tr picks the string for the current UI language — translations live inline at
+// each call site, so there's no separate catalog to keep in sync.
+private func tr(_ pt: String, _ en: String) -> String { gUILang == .pt ? pt : en }
+
 // Claude mascot (pixel-art) menu-bar icon, drawn per state (colour-coded).
 private enum ClaudeIcon {
     private static let cols = 16
@@ -205,6 +217,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = State(rawValue: obj["state"] as? String ?? "idle") ?? .idle
         outputRoot = obj["outputRoot"] as? String ?? ""
 
+        // The bridge resolves ui_language (incl. "auto") to "pt"/"en"; honor it
+        // so a config override drives the menu UI too, not just the .md output.
+        if let ui = obj["uiLanguage"] as? String {
+            gUILang = ui == "pt" ? .pt : .en
+        }
+
         if let meeting = obj["meeting"] as? [String: Any] {
             sessionID = meeting["ID"] as? String
             title = meeting["Title"] as? String ?? ""
@@ -239,14 +257,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         promptShowing = true
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Reunião detectada"
+        alert.messageText = tr("Reunião detectada", "Meeting detected")
         alert.informativeText = detectedTitle.isEmpty
-            ? "Começar a gravar esta reunião?"
-            : "Começar a gravar “\(detectedTitle)”?"
-        alert.addButton(withTitle: "Gravar")
-        alert.addButton(withTitle: "Agora não")
+            ? tr("Começar a gravar esta reunião?", "Start recording this meeting?")
+            : tr("Começar a gravar “\(detectedTitle)”?", "Start recording “\(detectedTitle)”?")
+        alert.addButton(withTitle: tr("Gravar", "Record"))
+        alert.addButton(withTitle: tr("Agora não", "Not now"))
 
-        let projectField = textField(placeholder: "Projeto (opcional)", value: lastProject)
+        let projectField = textField(placeholder: tr("Projeto (opcional)", "Project (optional)"), value: lastProject)
         alert.accessoryView = projectField
         alert.window.initialFirstResponder = projectField
 
@@ -266,7 +284,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc private func startManual() {
         guard let input = promptStartInput() else { return }
-        let title = input.title.isEmpty ? "Gravação manual" : input.title
+        let title = input.title.isEmpty ? tr("Gravação manual", "Manual recording") : input.title
         startSession(title: title, project: input.project, platform: "manual")
     }
 
@@ -278,7 +296,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard let self = self else { return }
             if !ok {
                 if let code = failCode { self.dismissedCode = code }
-                let message = self.errorMessage(from: data) ?? "Falha ao iniciar a gravação."
+                let message = self.errorMessage(from: data) ?? tr("Falha ao iniciar a gravação.", "Failed to start recording.")
                 DispatchQueue.main.async { self.showError(message) }
             }
             self.poll()
@@ -326,14 +344,21 @@ final class AppController: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "MeetMD"
-        alert.informativeText = """
+        alert.informativeText = tr("""
         Captura suas reuniões e gera a transcrição em Markdown, organizada por \
         projeto e pronta para o Claude processar.
 
         A transcrição é feita localmente (whisper.cpp) — o áudio não sai da sua \
         máquina. Reuniões do Google Meet no Safari são detectadas \
         automaticamente; ou grave manualmente pelo menu.
-        """
+        """, """
+        Captures your meetings and generates the transcript in Markdown, \
+        organized by project and ready for Claude to process.
+
+        Transcription runs locally (whisper.cpp) — the audio never leaves your \
+        machine. Google Meet meetings in Safari are detected automatically; or \
+        record manually from the menu.
+        """)
         alert.icon = ClaudeIcon.image(for: .recording, online: true, height: 76) // mascote gravando
         alert.addButton(withTitle: "OK")
         alert.runModal()
@@ -346,15 +371,15 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func promptStartInput() -> (title: String, project: String)? {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Iniciar gravação"
-        alert.informativeText = "Título e projeto (opcionais)."
-        alert.addButton(withTitle: "Iniciar")
-        alert.addButton(withTitle: "Cancelar")
+        alert.messageText = tr("Iniciar gravação", "Start recording")
+        alert.informativeText = tr("Título e projeto (opcionais).", "Title and project (optional).")
+        alert.addButton(withTitle: tr("Iniciar", "Start"))
+        alert.addButton(withTitle: tr("Cancelar", "Cancel"))
 
         let width: CGFloat = 240
-        let titleField = textField(placeholder: "Título", value: "")
+        let titleField = textField(placeholder: tr("Título", "Title"), value: "")
         titleField.frame = NSRect(x: 0, y: 30, width: width, height: 24)
-        let projectField = textField(placeholder: "Projeto", value: lastProject)
+        let projectField = textField(placeholder: tr("Projeto", "Project"), value: lastProject)
         projectField.frame = NSRect(x: 0, y: 0, width: width, height: 24)
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 54))
@@ -385,37 +410,37 @@ final class AppController: NSObject, NSApplicationDelegate {
         if online {
             switch state {
             case .idle:
-                menu.addItem(item("Iniciar gravação", #selector(startManual), "r", "record.circle"))
+                menu.addItem(item(tr("Iniciar gravação", "Start recording"), #selector(startManual), "r", "record.circle"))
             case .recording:
-                menu.addItem(item("Pausar", #selector(pause), "p", "pause.circle"))
-                menu.addItem(item("Parar e salvar", #selector(stop), "s", "stop.circle"))
+                menu.addItem(item(tr("Pausar", "Pause"), #selector(pause), "p", "pause.circle"))
+                menu.addItem(item(tr("Parar e salvar", "Stop & save"), #selector(stop), "s", "stop.circle"))
             case .paused:
-                menu.addItem(item("Retomar", #selector(resume), "p", "play.circle"))
-                menu.addItem(item("Parar e salvar", #selector(stop), "s", "stop.circle"))
+                menu.addItem(item(tr("Retomar", "Resume"), #selector(resume), "p", "play.circle"))
+                menu.addItem(item(tr("Parar e salvar", "Stop & save"), #selector(stop), "s", "stop.circle"))
             case .processing:
                 break // transcrevendo — sem ações
             }
-            menu.addItem(item("Abrir pasta dos arquivos", #selector(openFolder), "f", "folder"))
-            menu.addItem(item("Configurações…", #selector(openSettings), ",", "gearshape"))
+            menu.addItem(item(tr("Abrir pasta dos arquivos", "Open files folder"), #selector(openFolder), "f", "folder"))
+            menu.addItem(item(tr("Configurações…", "Settings…"), #selector(openSettings), ",", "gearshape"))
         }
         menu.addItem(.separator())
-        menu.addItem(item("Sobre o MeetMD", #selector(openAbout), "", "info.circle"))
-        menu.addItem(item("Sair", #selector(quit), "q", "power"))
+        menu.addItem(item(tr("Sobre o MeetMD", "About MeetMD"), #selector(openAbout), "", "info.circle"))
+        menu.addItem(item(tr("Sair", "Quit"), #selector(quit), "q", "power"))
         statusItem.menu = menu
     }
 
     private func headerText() -> String {
-        if !online { return "Bridge offline" }
+        if !online { return tr("Bridge offline", "Bridge offline") }
         switch state {
-        case .recording: return "Gravando: " + displayTitle()
-        case .paused: return "Pausado: " + displayTitle()
-        case .processing: return "Processando…"
-        case .idle: return "Pronto"
+        case .recording: return tr("Gravando: ", "Recording: ") + displayTitle()
+        case .paused: return tr("Pausado: ", "Paused: ") + displayTitle()
+        case .processing: return tr("Processando…", "Processing…")
+        case .idle: return tr("Pronto", "Ready")
         }
     }
 
     private func displayTitle() -> String {
-        title.isEmpty ? "sem título" : title
+        title.isEmpty ? tr("sem título", "untitled") : title
     }
 
     private func item(_ title: String, _ selector: Selector, _ key: String, _ symbol: String) -> NSMenuItem {
@@ -484,20 +509,22 @@ final class SettingsWindowController: NSWindowController {
     private let outputField = NSTextField()
     private let projectField = NSTextField()
     private let languagePopup = NSPopUpButton()
+    private let uiLanguagePopup = NSPopUpButton()
     private let autoDetectPopup = NSPopUpButton()
-    private let micCheck = NSButton(checkboxWithTitle: "Incluir minha voz (microfone)", target: nil, action: nil)
-    private let deleteCheck = NSButton(checkboxWithTitle: "Apagar áudio bruto após transcrever", target: nil, action: nil)
+    private let micCheck = NSButton(checkboxWithTitle: tr("Incluir minha voz (microfone)", "Include my voice (microphone)"), target: nil, action: nil)
+    private let deleteCheck = NSButton(checkboxWithTitle: tr("Apagar áudio bruto após transcrever", "Delete raw audio after transcribing"), target: nil, action: nil)
     private let hint = NSTextField(labelWithString: "")
 
     // (display title, config value) pairs.
-    private let languages = [("Automático", "auto"), ("Português", "pt"), ("Espanhol", "es"), ("Inglês", "en")]
-    private let autoModes = [("Perguntar antes de gravar", "ask"), ("Gravar automaticamente", "auto"), ("Desligada", "off")]
+    private let languages = [(tr("Automático", "Automatic"), "auto"), ("Português", "pt"), (tr("Espanhol", "Spanish"), "es"), (tr("Inglês", "English"), "en")]
+    private let uiLanguages = [(tr("Automático (do sistema)", "Automatic (system)"), "auto"), ("Português", "pt"), (tr("Inglês", "English"), "en")]
+    private let autoModes = [(tr("Perguntar antes de gravar", "Ask before recording"), "ask"), (tr("Gravar automaticamente", "Record automatically"), "auto"), (tr("Desligada", "Off"), "off")]
 
     init(base: String) {
         self.base = base
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 470, height: 360),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "MeetMD — Configurações"
+        window.title = tr("MeetMD — Configurações", "MeetMD — Settings")
         super.init(window: window)
         buildUI()
     }
@@ -514,21 +541,23 @@ final class SettingsWindowController: NSWindowController {
 
     private func buildUI() {
         languagePopup.addItems(withTitles: languages.map { $0.0 })
+        uiLanguagePopup.addItems(withTitles: uiLanguages.map { $0.0 })
         autoDetectPopup.addItems(withTitles: autoModes.map { $0.0 })
         outputField.placeholderString = "/Users/…/meetings"
-        projectField.placeholderString = "ex.: bora (opcional)"
+        projectField.placeholderString = tr("ex.: bora (opcional)", "e.g. bora (optional)")
 
-        let choose = NSButton(title: "Escolher…", target: self, action: #selector(chooseFolder))
+        let choose = NSButton(title: tr("Escolher…", "Choose…"), target: self, action: #selector(chooseFolder))
         choose.bezelStyle = .rounded
         let outputRow = NSStackView(views: [outputField, choose])
         outputRow.orientation = .horizontal
         outputRow.spacing = 6
 
         let form = NSStackView(views: [
-            labeled("Pasta de saída", outputRow),
-            labeled("Idioma", languagePopup),
-            labeled("Projeto padrão", projectField),
-            labeled("Detecção automática", autoDetectPopup),
+            labeled(tr("Pasta de saída", "Output folder"), outputRow),
+            labeled(tr("Idioma da interface", "Interface language"), uiLanguagePopup),
+            labeled(tr("Idioma da transcrição", "Transcription language"), languagePopup),
+            labeled(tr("Projeto padrão", "Default project"), projectField),
+            labeled(tr("Detecção automática", "Auto-detect"), autoDetectPopup),
             labeled("", micCheck),
             labeled("", deleteCheck),
         ])
@@ -540,10 +569,10 @@ final class SettingsWindowController: NSWindowController {
         hint.textColor = .systemRed
         hint.font = .systemFont(ofSize: 11)
 
-        let save = NSButton(title: "Salvar", target: self, action: #selector(saveSettings))
+        let save = NSButton(title: tr("Salvar", "Save"), target: self, action: #selector(saveSettings))
         save.bezelStyle = .rounded
         save.keyEquivalent = "\r"
-        let cancel = NSButton(title: "Cancelar", target: self, action: #selector(cancel))
+        let cancel = NSButton(title: tr("Cancelar", "Cancel"), target: self, action: #selector(cancel))
         cancel.bezelStyle = .rounded
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -583,12 +612,13 @@ final class SettingsWindowController: NSWindowController {
     private func load() {
         request("GET", nil) { [weak self] obj in
             guard let self = self, let o = obj else {
-                self?.hint.stringValue = "Bridge offline"
+                self?.hint.stringValue = tr("Bridge offline", "Bridge offline")
                 return
             }
             self.outputField.stringValue = o["outputRoot"] as? String ?? ""
             self.projectField.stringValue = o["defaultProject"] as? String ?? ""
             self.select(self.languagePopup, self.languages, value: o["language"] as? String ?? "auto")
+            self.select(self.uiLanguagePopup, self.uiLanguages, value: o["uiLanguage"] as? String ?? "auto")
             self.select(self.autoDetectPopup, self.autoModes, value: o["autoDetect"] as? String ?? "ask")
             self.micCheck.state = (o["captureMic"] as? Bool ?? true) ? .on : .off
             self.deleteCheck.state = (o["deleteAudio"] as? Bool ?? true) ? .on : .off
@@ -610,6 +640,7 @@ final class SettingsWindowController: NSWindowController {
         let body: [String: Any] = [
             "outputRoot": outputField.stringValue,
             "language": value(languagePopup, languages),
+            "uiLanguage": value(uiLanguagePopup, uiLanguages),
             "defaultProject": projectField.stringValue,
             "autoDetect": value(autoDetectPopup, autoModes),
             "captureMic": micCheck.state == .on,
@@ -619,7 +650,7 @@ final class SettingsWindowController: NSWindowController {
             if obj != nil {
                 self?.window?.close()
             } else {
-                self?.hint.stringValue = "Falha ao salvar (pasta inválida ou bridge offline)"
+                self?.hint.stringValue = tr("Falha ao salvar (pasta inválida ou bridge offline)", "Failed to save (invalid folder or bridge offline)")
             }
         }
     }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,18 +17,25 @@ const (
 	defaultEngine   = "local"          // local | api
 	defaultModel    = "ggml-small.bin" // alinhado ao modelo bundlado no .app
 	defaultVADModel = "ggml-silero-v5.1.2.bin"
-	defaultInterval = 3     // seconds, auto-detect poll
-	defaultMode     = "ask" // auto-detect: prompt before recording
+	defaultInterval = 3      // seconds, auto-detect poll
+	defaultMode     = "ask"  // auto-detect: prompt before recording
+	defaultUILang   = "auto" // UI + .md output language: follow the OS
 
 	configDirName  = ".meetmd"
 	configFileName = "config.yaml"
+
+	// Supported UI languages. Anything else (incl. "auto") resolves via the OS,
+	// falling back to English.
+	LangPT = "pt"
+	LangEN = "en"
 )
 
 // Config is the bridge's runtime configuration.
 type Config struct {
 	OutputRoot string     `yaml:"output_root"`
 	Port       int        `yaml:"port"`
-	Language   string     `yaml:"language"`
+	Language   string     `yaml:"language"`    // whisper transcription language (auto|pt|es|en|...)
+	UILanguage string     `yaml:"ui_language"` // UI + .md output language (auto|pt|en)
 	Whisper    Whisper    `yaml:"whisper"`
 	Audio      Audio      `yaml:"audio"`
 	AutoDetect AutoDetect `yaml:"auto_detect"`
@@ -62,6 +70,7 @@ func Default() Config {
 		OutputRoot: defaultOutputRoot(),
 		Port:       defaultPort,
 		Language:   defaultLanguage,
+		UILanguage: defaultUILang,
 		Whisper:    Whisper{Engine: defaultEngine, ModelPath: defaultModelPath(), VADModel: defaultVADModelPath()},
 		Audio:      Audio{CaptureMic: true, DeleteWavOnFinish: true},
 		AutoDetect: AutoDetect{Enabled: true, Mode: defaultMode, IntervalSeconds: defaultInterval},
@@ -99,6 +108,9 @@ func (c *Config) applyDefaults() {
 	if c.Language == "" {
 		c.Language = d.Language
 	}
+	if c.UILanguage == "" {
+		c.UILanguage = d.UILanguage
+	}
 	if c.Whisper.Engine == "" {
 		c.Whisper.Engine = d.Whisper.Engine
 	}
@@ -128,6 +140,22 @@ func Save(cfg Config) error {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// ResolvedUILang returns the concrete UI/output language ("pt" or "en"),
+// resolving "auto"/unknown against the OS language and falling back to English.
+func (c Config) ResolvedUILang() string {
+	switch strings.ToLower(strings.TrimSpace(c.UILanguage)) {
+	case LangPT:
+		return LangPT
+	case LangEN:
+		return LangEN
+	default: // auto / empty / unknown
+		if strings.HasPrefix(strings.ToLower(osLanguage()), LangPT) {
+			return LangPT
+		}
+		return LangEN
+	}
 }
 
 // DefaultPath returns the expected config file location.

@@ -30,7 +30,7 @@ func TestWriteCreatesAllFiles(t *testing.T) {
 		{Start: 11 * time.Second, Speaker: model.SpeakerYou, Text: "Beleza, a issue 70 fechou."},
 	}
 
-	res, err := Write(root, m, segs)
+	res, err := Write(root, m, segs, "pt")
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestTranscriptContent(t *testing.T) {
 	segs := []model.Segment{
 		{Start: 4 * time.Second, Speaker: model.SpeakerOthers, Text: "Vamos começar."},
 	}
-	res, err := Write(root, m, segs)
+	res, err := Write(root, m, segs, "pt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +72,36 @@ func TestTranscriptContent(t *testing.T) {
 	}
 }
 
+func TestTranscriptContentEN(t *testing.T) {
+	root := t.TempDir()
+	m := sampleMeeting()
+	segs := []model.Segment{
+		{Start: 4 * time.Second, Speaker: model.SpeakerOthers, Text: "Let's start."},
+	}
+	res, err := Write(root, m, segs, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript := readFile(t, filepath.Join(res.SessionDir, FileTranscript))
+	if !strings.Contains(transcript, "[00:00:04] Participants: Let's start.") {
+		t.Errorf("EN transcript missing localized speaker, got:\n%s", transcript)
+	}
+	if !strings.Contains(transcript, "# Transcript —") {
+		t.Errorf("EN transcript missing localized title, got:\n%s", transcript)
+	}
+	summary := readFile(t, filepath.Join(res.SessionDir, FileSummary))
+	if !strings.Contains(summary, "## Decisions") {
+		t.Errorf("EN summary missing localized heading, got:\n%s", summary)
+	}
+}
+
 func TestIndexIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	m := sampleMeeting()
-	if _, err := Write(root, m, nil); err != nil {
+	if _, err := Write(root, m, nil, "pt"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Write(root, m, nil); err != nil { // same meeting again
+	if _, err := Write(root, m, nil, "pt"); err != nil { // same meeting again
 		t.Fatal(err)
 	}
 	index := readFile(t, filepath.Join(root, FileIndex))
