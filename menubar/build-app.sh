@@ -18,6 +18,15 @@ MODELS_DIR="${MODELS_DIR:-$HOME/.meetmd/models}"
 WHISPER_MODEL="${WHISPER_MODEL:-ggml-small.bin}"
 VAD_MODEL="ggml-silero-v5.1.2.bin"
 
+# URL de download de cada modelo (sem array associativo — compat. bash 3.2 do macOS)
+model_url() {
+	case "$1" in
+	ggml-small.bin) echo "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" ;;
+	ggml-base.bin) echo "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin" ;;
+	ggml-silero-v5.1.2.bin) echo "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin" ;;
+	esac
+}
+
 echo "==> limpando $APP"
 rm -rf "$APP"
 mkdir -p "$MACOS"
@@ -40,7 +49,10 @@ echo "==> compilando bridge (Go)"
 echo "==> whisper.cpp estático + Metal (binário único, autocontido)"
 WHISPER_STATIC="$WHISPER_SRC/build-static"
 if [ ! -x "$WHISPER_STATIC/bin/whisper-cli" ]; then
-	[ -d "$WHISPER_SRC" ] || { echo "ERRO: clone o whisper.cpp em $WHISPER_SRC (ver README)"; exit 1; }
+	if [ ! -d "$WHISPER_SRC" ]; then
+		echo "    clonando whisper.cpp em $WHISPER_SRC"
+		git clone --depth 1 https://github.com/ggerganov/whisper.cpp "$WHISPER_SRC" >/dev/null 2>&1
+	fi
 	echo "    (primeira vez — buildando, leva alguns minutos)"
 	cmake -S "$WHISPER_SRC" -B "$WHISPER_STATIC" -DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
@@ -51,13 +63,13 @@ fi
 cp "$WHISPER_STATIC/bin/whisper-cli" "$MACOS/whisper-cli"
 
 echo "==> modelos → Resources/models"
-mkdir -p "$RES/models"
+mkdir -p "$RES/models" "$MODELS_DIR"
 for m in "$WHISPER_MODEL" "$VAD_MODEL"; do
-	if [ -f "$MODELS_DIR/$m" ]; then
-		cp "$MODELS_DIR/$m" "$RES/models/"
-	else
-		echo "    aviso: modelo $m não encontrado em $MODELS_DIR (ver pré-requisitos)"
+	if [ ! -f "$MODELS_DIR/$m" ]; then
+		echo "    baixando $m (uma vez)"
+		curl -L --fail --progress-bar -o "$MODELS_DIR/$m" "$(model_url "$m")"
 	fi
+	cp "$MODELS_DIR/$m" "$RES/models/"
 done
 
 for b in MeetMD meetmd-bridge whisper-cli system-audio-recorder; do
