@@ -80,6 +80,9 @@ func mustHome() string {
 }
 
 func copyExecutable(src, dst string) error {
+	if filepath.Clean(src) == filepath.Clean(dst) {
+		return nil // already the installed binary; nothing to copy
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
