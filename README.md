@@ -45,44 +45,23 @@ Detalhes e tradeoffs em [docs/specs/2026-06-08-architecture.md](docs/specs/2026-
 
 ## Para testers (macOS)
 
-> Requer **Apple Silicon**, Go 1.21+ e Swift (Xcode CLT). Modelos + whisper ainda são instalados à mão — o [#4](https://github.com/thebigdatacomp/meetmd/issues/4) vai automatizar isso no onboarding.
+> Requer **Apple Silicon**, Go 1.21+ e Swift (Xcode CLT).
 
 ### 1. Pré-requisitos (uma vez)
 
 ```bash
-brew install cmake                 # p/ buildar o whisper com Metal
-xcode-select --install             # swiftc (se ainda não tiver)
-
-# modelos (transcrição + VAD)
-mkdir -p ~/.meetmd/models
-curl -L -o ~/.meetmd/models/ggml-small.bin        https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-curl -L -o ~/.meetmd/models/ggml-silero-v5.1.2.bin https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin
-
-# whisper.cpp NATIVO arm64 + Metal (o bottle do brew é x86/Rosetta, ~10x mais lento)
-git clone --depth 1 https://github.com/ggerganov/whisper.cpp ~/.meetmd/tools/whisper.cpp
-cmake -S ~/.meetmd/tools/whisper.cpp -B ~/.meetmd/tools/whisper.cpp/build \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 \
-  -DCMAKE_SYSTEM_PROCESSOR=arm64 -DGGML_NATIVE=OFF -DGGML_METAL=ON -DWHISPER_BUILD_TESTS=OFF
-cmake --build ~/.meetmd/tools/whisper.cpp/build -j --target whisper-cli
-
-# config (o helper de áudio é bundlado no .app — não precisa setar mac_helper_path)
-cat > ~/.meetmd/config.yaml <<EOF
-output_root: $HOME/.meetmd/meetings
-whisper:
-  bin_path: $HOME/.meetmd/tools/whisper.cpp/build/bin/whisper-cli
-  model_path: $HOME/.meetmd/models/ggml-small.bin
-  vad_model: $HOME/.meetmd/models/ggml-silero-v5.1.2.bin
-EOF
+brew install cmake          # buildar o whisper com Metal
+xcode-select --install      # swiftc
 ```
 
 ### 2. Build e abrir
 
 ```bash
-./menubar/build-app.sh         # empacota menu-bar + bridge + helper no MeetMD.app (assinado)
-open menubar/MeetMD.app         # ícone (mascote do Claude) aparece na barra — sobe o bridge sozinho
+./menubar/build-app.sh      # baixa modelos + whisper, builda static Metal, empacota no MeetMD.app
+open menubar/MeetMD.app      # ícone (mascote do Claude) na barra — sobe o bridge sozinho, sem terminal
 ```
 
-Sem terminal aberto: o `MeetMD.app` lança o bridge internamente.
+A 1ª vez baixa os modelos (~490MB) e compila o whisper (alguns minutos); depois fica cacheado. O `.app` é **autocontido** (resolve whisper/modelos do bundle) — **não precisa de config**. Crie `~/.meetmd/config.yaml` só pra customizar (ex.: `output_root`, `language`).
 
 ### 3. Permissões (na 1ª gravação) — conceda ao **MeetMD**
 - **Gravação de Tela** → participantes · **Microfone** → sua voz · **Automação ▸ Safari** → detecção do Meet.
@@ -104,8 +83,8 @@ cd bridge && make run                                                       # br
 cd menubar && swiftc -O MeetMDBar.swift -o meetmd-bar -framework Cocoa && ./meetmd-bar &
 ```
 
-Nesse modo as permissões ficam no VS Code/terminal; use o `.app` pro fluxo real.
+Nesse modo as permissões ficam no VS Code/terminal e o bridge não usa o bundle — aponte o whisper no config (`whisper.bin_path`) ou tenha `whisper-cli` no `PATH` (ex.: o estático em `~/.meetmd/tools/whisper.cpp/build-static/bin/`). Use o `.app` pro fluxo real.
 
 ## Status
 
-Funcional no macOS via `.app` (captura sistema+mic, transcrição local Metal, diarização Você/Participantes, menu-bar, settings, hot-reload). Falta no `.app`: bundlar whisper/modelos + onboarding (#4). Windows/Linux: capturer pendente (`#1`/`#2`).
+Funcional no macOS via `.app` **autocontido** (captura sistema+mic, transcrição local Metal, diarização Você/Participantes, menu-bar, settings, hot-reload, whisper+modelos bundlados). Falta pra distribuir: assinatura Developer ID + notarização (#4). Windows/Linux: capturer pendente (`#1`/`#2`).
