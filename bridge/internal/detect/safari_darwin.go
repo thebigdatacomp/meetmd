@@ -57,6 +57,11 @@ func loop(ctx context.Context, mgr *session.Manager, store *config.Store, interv
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Snooze: do nothing at all — no Safari query, no prompt, no auto-record.
+			if mgr.Asleep() {
+				mgr.ClearDetected()
+				continue
+			}
 			ad := store.Get().AutoDetect
 			if !ad.Enabled {
 				mgr.ClearDetected()

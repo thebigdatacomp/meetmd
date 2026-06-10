@@ -76,6 +76,23 @@ for b in MeetMD meetmd-bridge whisper-cli system-audio-recorder; do
 	[ -x "$MACOS/$b" ] || { echo "ERRO: binário $b não foi gerado"; exit 1; }
 done
 
+echo "==> ícone do app (.icns, renderizado do mascote)"
+ICONSET="$(mktemp -d)/MeetMD.iconset"
+mkdir -p "$ICONSET"
+gen_icon() { "$MACOS/MeetMD" --app-icon "$ICONSET/icon_$1.png" "$2"; }
+gen_icon 16x16 16
+gen_icon 16x16@2x 32
+gen_icon 32x32 32
+gen_icon 32x32@2x 64
+gen_icon 128x128 128
+gen_icon 128x128@2x 256
+gen_icon 256x256 256
+gen_icon 256x256@2x 512
+gen_icon 512x512 512
+gen_icon 512x512@2x 1024
+iconutil -c icns "$ICONSET" -o "$RES/AppIcon.icns"
+rm -rf "$(dirname "$ICONSET")"
+
 echo "==> Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -86,6 +103,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleDisplayName</key>     <string>MeetMD</string>
 	<key>CFBundleIdentifier</key>      <string>${BUNDLE_ID}</string>
 	<key>CFBundleExecutable</key>      <string>MeetMD</string>
+	<key>CFBundleIconFile</key>        <string>AppIcon</string>
 	<key>CFBundleVersion</key>         <string>${VERSION}</string>
 	<key>CFBundleShortVersionString</key><string>${VERSION}</string>
 	<key>CFBundlePackageType</key>     <string>APPL</string>

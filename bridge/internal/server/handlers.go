@@ -79,6 +79,24 @@ func (s *Server) handleNoteStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"sessionId": note.ID})
 }
 
+// handleSleep / handleWake toggle snooze: while asleep the detector does nothing
+// (no prompts, no auto-record). Both are idempotent POSTs with no body.
+func (s *Server) handleSleep(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	s.mgr.Sleep()
+	writeJSON(w, http.StatusOK, map[string]bool{"asleep": true})
+}
+
+func (s *Server) handleWake(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	s.mgr.Wake()
+	writeJSON(w, http.StatusOK, map[string]bool{"asleep": false})
+}
+
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, id string) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return

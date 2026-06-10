@@ -99,6 +99,21 @@ func TestStartNoteWritesToNotes(t *testing.T) {
 	}
 }
 
+func TestSleepWake(t *testing.T) {
+	mgr := newTestManager(t.TempDir())
+	if mgr.Asleep() || mgr.Status().Asleep {
+		t.Fatal("manager should start awake")
+	}
+	mgr.Sleep()
+	if !mgr.Asleep() || !mgr.Status().Asleep {
+		t.Error("manager should be asleep after Sleep()")
+	}
+	mgr.Wake()
+	if mgr.Asleep() || mgr.Status().Asleep {
+		t.Error("manager should be awake after Wake()")
+	}
+}
+
 func TestSanitizeProject(t *testing.T) {
 	cases := map[string]string{
 		"Bora":        "bora",
