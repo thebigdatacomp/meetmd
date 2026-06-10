@@ -64,10 +64,10 @@ func TestStopNoProjectUsesRoot(t *testing.T) {
 	}
 }
 
-func TestStartNoteWritesToInbox(t *testing.T) {
+func TestStartNoteWritesToNotes(t *testing.T) {
 	root := t.TempDir()
-	inbox := filepath.Join(root, "inbox")
-	mgr := New(config.NewStore(config.Config{OutputRoot: root, InboxRoot: inbox}),
+	notes := filepath.Join(root, "notes")
+	mgr := New(config.NewStore(config.Config{OutputRoot: root, NotesRoot: notes}),
 		audio.Stub{}, func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
 	ctx := context.Background()
 
@@ -82,14 +82,14 @@ func TestStartNoteWritesToInbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	// The note lands in the inbox (not meetings/), as a single .md file.
-	if res.SessionDir != inbox {
-		t.Errorf("note dir = %s, want %s", res.SessionDir, inbox)
+	// The note lands in the notes folder (not meetings/), as a single .md file.
+	if res.SessionDir != notes {
+		t.Errorf("note dir = %s, want %s", res.SessionDir, notes)
 	}
 	if len(res.Files) != 1 || !strings.HasSuffix(res.Files[0], "-note.md") {
 		t.Fatalf("unexpected note files: %v", res.Files)
 	}
-	body, err := os.ReadFile(filepath.Join(inbox, res.Files[0]))
+	body, err := os.ReadFile(filepath.Join(notes, res.Files[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,8 +100,8 @@ func TestStartNoteWritesToInbox(t *testing.T) {
 
 func TestCommonDir(t *testing.T) {
 	cases := []struct{ a, b, want string }{
-		{"/Users/rob/.meetmd/meetings", "/Users/rob/.meetmd/inbox", "/Users/rob/.meetmd"},
-		{"/Users/rob/.meetmd/meetings", "/Users/rob/.meetmd/meetings", "/Users/rob/.meetmd/meetings"},
+		{"/Users/rob/.meetmd/recordings/meetings", "/Users/rob/.meetmd/recordings/notes", "/Users/rob/.meetmd/recordings"},
+		{"/Users/rob/.meetmd/recordings/meetings", "/Users/rob/.meetmd/recordings/meetings", "/Users/rob/.meetmd/recordings/meetings"},
 		{"/var/data", "", "/var/data"},
 		{"", "/var/data", "/var/data"},
 		{"/a/b", "/c/d", "/"},

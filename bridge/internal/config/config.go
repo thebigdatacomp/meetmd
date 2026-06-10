@@ -24,6 +24,11 @@ const (
 	configDirName  = ".meetmd"
 	configFileName = "config.yaml"
 
+	// Recordings live under <home>/.meetmd/recordings/{meetings,notes}.
+	recordingsDir = "recordings"
+	meetingsDir   = "meetings"
+	notesDir      = "notes"
+
 	// Supported UI languages. Anything else (incl. "auto") resolves via the OS,
 	// falling back to English.
 	LangPT = "pt"
@@ -32,8 +37,8 @@ const (
 
 // Config is the bridge's runtime configuration.
 type Config struct {
-	OutputRoot string     `yaml:"output_root"`
-	InboxRoot  string     `yaml:"inbox_root"` // quick voice notes land here (not meetings/)
+	OutputRoot string     `yaml:"output_root"` // meetings land here (recordings/meetings)
+	NotesRoot  string     `yaml:"notes_root"`  // quick voice notes land here (recordings/notes)
 	Port       int        `yaml:"port"`
 	Language   string     `yaml:"language"`    // whisper transcription language (auto|pt|es|en|...)
 	UILanguage string     `yaml:"ui_language"` // UI + .md output language (auto|pt|en)
@@ -69,7 +74,7 @@ type Audio struct {
 func Default() Config {
 	return Config{
 		OutputRoot: defaultOutputRoot(),
-		InboxRoot:  defaultInboxRoot(),
+		NotesRoot:  defaultNotesRoot(),
 		Port:       defaultPort,
 		Language:   defaultLanguage,
 		UILanguage: defaultUILang,
@@ -104,8 +109,8 @@ func (c *Config) applyDefaults() {
 	if c.OutputRoot == "" {
 		c.OutputRoot = d.OutputRoot
 	}
-	if c.InboxRoot == "" {
-		c.InboxRoot = d.InboxRoot
+	if c.NotesRoot == "" {
+		c.NotesRoot = d.NotesRoot
 	}
 	if c.Port == 0 {
 		c.Port = d.Port
@@ -169,11 +174,11 @@ func DefaultPath() string {
 }
 
 func defaultOutputRoot() string {
-	return filepath.Join(homeDir(), configDirName, "meetings")
+	return filepath.Join(homeDir(), configDirName, recordingsDir, meetingsDir)
 }
 
-func defaultInboxRoot() string {
-	return filepath.Join(homeDir(), configDirName, "inbox")
+func defaultNotesRoot() string {
+	return filepath.Join(homeDir(), configDirName, recordingsDir, notesDir)
 }
 
 func defaultModelPath() string {

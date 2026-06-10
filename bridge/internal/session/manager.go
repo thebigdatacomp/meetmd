@@ -41,7 +41,7 @@ const (
 )
 
 // Kind distinguishes a full meeting recording from a quick voice note. A note
-// is mic-only and writes a lean Markdown file to the inbox.
+// is mic-only and writes a lean Markdown file to the notes folder.
 type Kind string
 
 const (
@@ -72,7 +72,7 @@ type Status struct {
 	Meeting    *model.Meeting   `json:"meeting,omitempty"`
 	Detected   *DetectedMeeting `json:"detected,omitempty"`
 	OutputRoot string           `json:"outputRoot"`
-	FilesRoot  string           `json:"filesRoot"`  // folder containing meetings/ and inbox/
+	FilesRoot  string           `json:"filesRoot"`  // recordings folder (holds meetings/ and notes/)
 	UILanguage string           `json:"uiLanguage"` // resolved UI language ("pt"/"en")
 }
 
@@ -146,9 +146,9 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, e
 }
 
 // StartNote begins a quick voice note: a mic-only recording (no Screen Recording
-// permission) whose output is a lean Markdown file in the inbox.
+// permission) whose output is a lean Markdown file in the notes folder.
 func (m *Manager) StartNote(ctx context.Context) (model.Meeting, error) {
-	if m.store.Get().InboxRoot == "" {
+	if m.store.Get().NotesRoot == "" {
 		return model.Meeting{}, ErrEmptyOutput
 	}
 	m.mu.Lock()
@@ -201,7 +201,7 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 
 	var res writer.Result
 	if kind == KindNote {
-		res, err = writer.WriteNote(cfg.InboxRoot, meeting, segments, cfg.ResolvedUILang())
+		res, err = writer.WriteNote(cfg.NotesRoot, meeting, segments, cfg.ResolvedUILang())
 	} else {
 		res, err = writer.Write(outputRoot(cfg.OutputRoot, meeting.Project), meeting, segments, cfg.ResolvedUILang())
 	}
@@ -237,7 +237,7 @@ func (m *Manager) Status() Status {
 		State:      StateIdle,
 		Kind:       m.kind,
 		OutputRoot: cfg.OutputRoot,
-		FilesRoot:  commonDir(cfg.OutputRoot, cfg.InboxRoot),
+		FilesRoot:  commonDir(cfg.OutputRoot, cfg.NotesRoot),
 		UILanguage: cfg.ResolvedUILang(),
 		Detected:   m.detected,
 	}
@@ -351,8 +351,8 @@ func outputRoot(base, project string) string {
 }
 
 // commonDir returns the deepest directory that contains both a and b, so the UI
-// can open a single folder showing meetings/ and inbox/ side by side. With the
-// default layout (~/.meetmd/meetings, ~/.meetmd/inbox) that is ~/.meetmd.
+// can open a single folder showing meetings/ and notes/ side by side. With the
+// default layout that is ~/.meetmd/recordings.
 func commonDir(a, b string) string {
 	if a == "" {
 		return b

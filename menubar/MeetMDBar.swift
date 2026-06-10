@@ -173,7 +173,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var sessionID: String?
     private var title = ""
     private var outputRoot = ""
-    private var filesRoot = "" // folder containing meetings/ and inbox/
+    private var filesRoot = "" // recordings folder (holds meetings/ and notes/)
     private var detectedCode: String?
     private var detectedTitle = ""
 
@@ -292,7 +292,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         startSession(title: title, project: input.project, platform: "manual")
     }
 
-    // startNote begins a quick voice note: mic-only, no prompt, lands in the inbox.
+    // startNote begins a quick voice note: mic-only, no prompt, lands in notes/.
     @objc private func startNote() {
         request("POST", "/notes/start") { [weak self] data, ok in
             guard let self = self else { return }
@@ -345,7 +345,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openFolder() {
-        // Open the folder that holds both meetings/ and inbox/ (falls back to the
+        // Open the folder that holds both meetings/ and notes/ (falls back to the
         // meetings root if the bridge didn't report a common folder).
         let path = filesRoot.isEmpty ? outputRoot : filesRoot
         guard !path.isEmpty else { return }
@@ -372,7 +372,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         automaticamente; ou grave manualmente pelo menu.
 
         Use também "Nova nota de voz" para ditar uma anotação rápida (só \
-        microfone, sem permissão de tela) direto para a sua caixa de entrada.
+        microfone, sem permissão de tela) direto para a pasta de notas.
         """, """
         Captures your meetings and generates the transcript in Markdown, \
         organized by project and ready for Claude to process.
@@ -382,7 +382,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         record manually from the menu.
 
         Use "New voice note" to dictate a quick note (mic only, no screen \
-        permission) straight to your inbox.
+        permission) straight to your notes folder.
         """)
         alert.icon = ClaudeIcon.image(for: .recording, online: true, height: 76) // mascote gravando
         alert.addButton(withTitle: "OK")

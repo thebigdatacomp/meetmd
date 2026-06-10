@@ -13,19 +13,19 @@ import (
 const FileNoteSuffix = "-note.md"
 
 // WriteNote renders a quick voice note as a single lean Markdown file in
-// inboxRoot — no per-note folder, no diarization, no INDEX. The note carries
+// notesRoot — no per-note folder, no diarization, no INDEX. The note carries
 // just a timestamp and the transcribed text, ready for Claude to pick up.
-func WriteNote(inboxRoot string, note model.Meeting, segments []model.Segment, lang string) (Result, error) {
-	if err := os.MkdirAll(inboxRoot, dirPerm); err != nil {
-		return Result{}, fmt.Errorf("create inbox dir: %w", err)
+func WriteNote(notesRoot string, note model.Meeting, segments []model.Segment, lang string) (Result, error) {
+	if err := os.MkdirAll(notesRoot, dirPerm); err != nil {
+		return Result{}, fmt.Errorf("create notes dir: %w", err)
 	}
 	t := textsFor(lang)
 	name := note.StartedAt.Format("2006-01-02-1504") + FileNoteSuffix
-	path := filepath.Join(inboxRoot, name)
+	path := filepath.Join(notesRoot, name)
 	if err := os.WriteFile(path, []byte(renderNote(note, segments, t)), 0o644); err != nil {
 		return Result{}, fmt.Errorf("write %s: %w", name, err)
 	}
-	return Result{SessionDir: inboxRoot, Files: []string{name}}, nil
+	return Result{SessionDir: notesRoot, Files: []string{name}}, nil
 }
 
 func renderNote(note model.Meeting, segments []model.Segment, t texts) string {
