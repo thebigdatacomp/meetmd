@@ -96,7 +96,10 @@ func (c *macCapturer) Stop() (Recording, error) {
 	cmd, wav, mic, micOnly := c.cmd, c.wavPath, c.micPath, c.micOnly
 	c.cmd, c.wavPath, c.micPath, c.micOnly = nil, "", "", false
 
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	// A mic-only note makes a mic failure (e.g. denied permission) fatal, so the
+	// helper may have already exited by the time we stop. That is not an error —
+	// fall through to the "no usable audio" handling below for a graceful empty.
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return Recording{}, fmt.Errorf("signal audio helper: %w", err)
 	}
 	waitErr := cmd.Wait() // exit 2 = ran but captured nothing

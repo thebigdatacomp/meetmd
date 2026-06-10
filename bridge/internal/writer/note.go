@@ -9,18 +9,17 @@ import (
 	"github.com/thebigdatacomp/meetmd/internal/model"
 )
 
-// FileNoteSuffix is appended to a note's timestamp to form its file name.
-const FileNoteSuffix = "-note.md"
-
 // WriteNote renders a quick voice note as a single lean Markdown file in
 // notesRoot — no per-note folder, no diarization, no INDEX. The note carries
 // just a timestamp and the transcribed text, ready for Claude to pick up.
+// The file name is the note's ID (which already encodes its timestamp), so the
+// frontmatter id always matches the file on disk.
 func WriteNote(notesRoot string, note model.Meeting, segments []model.Segment, lang string) (Result, error) {
 	if err := os.MkdirAll(notesRoot, dirPerm); err != nil {
 		return Result{}, fmt.Errorf("create notes dir: %w", err)
 	}
 	t := textsFor(lang)
-	name := note.StartedAt.Format("2006-01-02-1504") + FileNoteSuffix
+	name := note.ID + ".md"
 	path := filepath.Join(notesRoot, name)
 	if err := os.WriteFile(path, []byte(renderNote(note, segments, t)), 0o644); err != nil {
 		return Result{}, fmt.Errorf("write %s: %w", name, err)

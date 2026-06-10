@@ -49,6 +49,9 @@ const (
 	KindNote    Kind = "note"
 )
 
+// noteIDSuffix tags a voice note's session ID (and, with ".md", its file name).
+const noteIDSuffix = "-note"
+
 // DetectedMeeting is a meeting found in the browser but not yet being recorded;
 // a UI can prompt the user to start. Set by the detector (see internal/detect).
 type DetectedMeeting struct {
@@ -109,7 +112,7 @@ func New(store *config.Store, capturer audio.Capturer, newTranscriber Transcribe
 
 // Start begins a recording and returns the created meeting (with its ID).
 func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, error) {
-	if m.store.Get().OutputRoot == "" {
+	if m.store.Get().RecordingsRoot == "" {
 		return model.Meeting{}, ErrEmptyOutput
 	}
 	m.mu.Lock()
@@ -148,7 +151,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, e
 // StartNote begins a quick voice note: a mic-only recording (no Screen Recording
 // permission) whose output is a lean Markdown file in the notes folder.
 func (m *Manager) StartNote(ctx context.Context) (model.Meeting, error) {
-	if m.store.Get().NotesRoot == "" {
+	if m.store.Get().RecordingsRoot == "" {
 		return model.Meeting{}, ErrEmptyOutput
 	}
 	m.mu.Lock()
@@ -157,8 +160,10 @@ func (m *Manager) StartNote(ctx context.Context) (model.Meeting, error) {
 		return model.Meeting{}, ErrBusy
 	}
 
+	// Second-granularity ID so two notes started in the same minute don't collide
+	// (notes have no title/slug to disambiguate them, unlike meetings).
 	note := model.Meeting{Platform: model.PlatformManual, StartedAt: m.now()}
-	note.ID = note.StartedAt.Format("2006-01-02-1504") + "-note"
+	note.ID = note.StartedAt.Format("2006-01-02-150405") + noteIDSuffix
 
 	if err := m.capturer.StartMicOnly(ctx, note.ID); err != nil {
 		return model.Meeting{}, fmt.Errorf("start mic capture: %w", err)
@@ -201,9 +206,9 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 
 	var res writer.Result
 	if kind == KindNote {
-		res, err = writer.WriteNote(cfg.NotesRoot, meeting, segments, cfg.ResolvedUILang())
+		res, err = writer.WriteNote(cfg.NotesRoot(), meeting, segments, cfg.ResolvedUILang())
 	} else {
-		res, err = writer.Write(outputRoot(cfg.OutputRoot, meeting.Project), meeting, segments, cfg.ResolvedUILang())
+		res, err = writer.Write(outputRoot(cfg.MeetingsRoot(), meeting.Project), meeting, segments, cfg.ResolvedUILang())
 	}
 	if err != nil {
 		return writer.Result{}, err
@@ -236,8 +241,8 @@ func (m *Manager) Status() Status {
 	st := Status{
 		State:      StateIdle,
 		Kind:       m.kind,
-		OutputRoot: cfg.OutputRoot,
-		FilesRoot:  commonDir(cfg.OutputRoot, cfg.NotesRoot),
+		OutputRoot: cfg.MeetingsRoot(),
+		FilesRoot:  cfg.RecordingsRoot,
 		UILanguage: cfg.ResolvedUILang(),
 		Detected:   m.detected,
 	}
@@ -348,33 +353,6 @@ func outputRoot(base, project string) string {
 		return base
 	}
 	return filepath.Join(base, project)
-}
-
-// commonDir returns the deepest directory that contains both a and b, so the UI
-// can open a single folder showing meetings/ and notes/ side by side. With the
-// default layout that is ~/.meetmd/recordings.
-func commonDir(a, b string) string {
-	if a == "" {
-		return b
-	}
-	if b == "" {
-		return a
-	}
-	as := strings.Split(filepath.Clean(a), string(filepath.Separator))
-	bs := strings.Split(filepath.Clean(b), string(filepath.Separator))
-	n := len(as)
-	if len(bs) < n {
-		n = len(bs)
-	}
-	i := 0
-	for i < n && as[i] == bs[i] {
-		i++
-	}
-	common := strings.Join(as[:i], string(filepath.Separator))
-	if common == "" {
-		return string(filepath.Separator)
-	}
-	return common
 }
 
 // transcribeRecording transcribes whichever channels were captured, labels each

@@ -8,13 +8,13 @@ import (
 
 func TestToDTO(t *testing.T) {
 	cfg := config.Config{
-		OutputRoot: "/out",
-		Language:   "pt",
-		Audio:      config.Audio{CaptureMic: true, DeleteWavOnFinish: false},
-		AutoDetect: config.AutoDetect{Enabled: true, Mode: "auto", Project: "bora"},
+		RecordingsRoot: "/out",
+		Language:       "pt",
+		Audio:          config.Audio{CaptureMic: true, DeleteWavOnFinish: false},
+		AutoDetect:     config.AutoDetect{Enabled: true, Mode: "auto", Project: "bora"},
 	}
 	d := toDTO(cfg)
-	if d.OutputRoot != "/out" || d.Language != "pt" || d.DefaultProject != "bora" {
+	if d.RecordingsRoot != "/out" || d.Language != "pt" || d.DefaultProject != "bora" {
 		t.Errorf("basic fields wrong: %+v", d)
 	}
 	if d.AutoDetect != autoAuto || !d.CaptureMic || d.DeleteAudio {
@@ -37,7 +37,7 @@ func TestApplyDTOPreservesInternalFields(t *testing.T) {
 		Audio:   config.Audio{MacHelperPath: "/helper"},
 	}
 	dto := settingsDTO{
-		OutputRoot:     "/new",
+		RecordingsRoot: "/new",
 		Language:       "es",
 		DefaultProject: "fevo",
 		AutoDetect:     autoOff,
@@ -46,7 +46,7 @@ func TestApplyDTOPreservesInternalFields(t *testing.T) {
 	}
 	out := applyDTO(base, dto)
 
-	if out.OutputRoot != "/new" || out.Language != "es" || out.AutoDetect.Project != "fevo" {
+	if out.RecordingsRoot != "/new" || out.Language != "es" || out.AutoDetect.Project != "fevo" {
 		t.Errorf("user fields not applied: %+v", out)
 	}
 	if out.AutoDetect.Enabled || out.Audio.CaptureMic || !out.Audio.DeleteWavOnFinish {
@@ -59,7 +59,7 @@ func TestApplyDTOPreservesInternalFields(t *testing.T) {
 
 func TestApplyDTOAutoModes(t *testing.T) {
 	for label, wantEnabled := range map[string]bool{autoOff: false, autoAsk: true, autoAuto: true} {
-		out := applyDTO(config.Config{}, settingsDTO{OutputRoot: "/x", AutoDetect: label})
+		out := applyDTO(config.Config{}, settingsDTO{RecordingsRoot: "/x", AutoDetect: label})
 		if out.AutoDetect.Enabled != wantEnabled {
 			t.Errorf("%q -> enabled=%v, want %v", label, out.AutoDetect.Enabled, wantEnabled)
 		}

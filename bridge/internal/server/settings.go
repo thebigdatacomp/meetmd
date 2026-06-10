@@ -19,7 +19,7 @@ const (
 
 // settingsDTO is the user-facing subset of the config (no internal paths).
 type settingsDTO struct {
-	OutputRoot     string `json:"outputRoot"`
+	RecordingsRoot string `json:"recordingsRoot"` // base folder for meetings/ and notes/
 	Language       string `json:"language"`       // whisper transcription: auto | pt | es | en | ...
 	UILanguage     string `json:"uiLanguage"`     // UI + .md output: auto | pt | en
 	DefaultProject string `json:"defaultProject"` // project for auto-detected meetings
@@ -45,14 +45,14 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if strings.TrimSpace(dto.OutputRoot) == "" {
-		writeError(w, http.StatusBadRequest, "outputRoot é obrigatório")
+	if strings.TrimSpace(dto.RecordingsRoot) == "" {
+		writeError(w, http.StatusBadRequest, "recordingsRoot é obrigatório")
 		return
 	}
 
 	cfg := applyDTO(s.store.Get(), dto)
-	if err := os.MkdirAll(cfg.OutputRoot, 0o755); err != nil {
-		writeError(w, http.StatusBadRequest, "não foi possível criar a pasta de saída: "+err.Error())
+	if err := os.MkdirAll(cfg.RecordingsRoot, 0o755); err != nil {
+		writeError(w, http.StatusBadRequest, "não foi possível criar a pasta de gravações: "+err.Error())
 		return
 	}
 	if err := config.Save(cfg); err != nil {
@@ -72,7 +72,7 @@ func toDTO(cfg config.Config) settingsDTO {
 		}
 	}
 	return settingsDTO{
-		OutputRoot:     cfg.OutputRoot,
+		RecordingsRoot: cfg.RecordingsRoot,
 		Language:       cfg.Language,
 		UILanguage:     cfg.UILanguage,
 		DefaultProject: cfg.AutoDetect.Project,
@@ -85,7 +85,7 @@ func toDTO(cfg config.Config) settingsDTO {
 // applyDTO maps the user-facing settings onto a full config, preserving the
 // internal fields (model/bin/vad/helper paths, port) untouched.
 func applyDTO(cfg config.Config, dto settingsDTO) config.Config {
-	cfg.OutputRoot = strings.TrimSpace(dto.OutputRoot)
+	cfg.RecordingsRoot = strings.TrimSpace(dto.RecordingsRoot)
 	cfg.Language = strings.TrimSpace(dto.Language)
 	if ui := strings.TrimSpace(dto.UILanguage); ui != "" {
 		cfg.UILanguage = ui

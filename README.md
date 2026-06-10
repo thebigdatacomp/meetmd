@@ -79,8 +79,7 @@ O `.app` é **autocontido** e roda **sem nenhum config** — whisper, modelos e 
 
 | Chave | Default | Pra quê |
 |-------|---------|---------|
-| `output_root` | `~/.meetmd/recordings/meetings` | onde as reuniões são salvas |
-| `notes_root` | `~/.meetmd/recordings/notes` | onde as notas de voz são salvas |
+| `recordings_root` | `~/.meetmd/recordings` | pasta base; reuniões vão em `meetings/`, notas em `notes/` |
 | `language` | `auto` | idioma da transcrição (whisper) |
 | `ui_language` | `auto` | idioma da UI e dos `.md` (`auto` segue o SO, ou `pt`/`en`) |
 

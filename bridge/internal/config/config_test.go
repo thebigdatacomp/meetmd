@@ -34,6 +34,30 @@ func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsDerivesRoots(t *testing.T) {
+	c := Config{RecordingsRoot: "/data/rec"}
+	c.applyDefaults()
+	if c.MeetingsRoot() != "/data/rec/meetings" {
+		t.Errorf("MeetingsRoot = %q", c.MeetingsRoot())
+	}
+	if c.NotesRoot() != "/data/rec/notes" {
+		t.Errorf("NotesRoot = %q", c.NotesRoot())
+	}
+}
+
+func TestApplyDefaultsMigratesLegacyOutputRoot(t *testing.T) {
+	// Pre-recordings configs only had output_root (the meetings dir); RecordingsRoot
+	// must become its parent so existing meetings are still found.
+	c := Config{LegacyOutputRoot: "/home/u/.meetmd/meetings"}
+	c.applyDefaults()
+	if c.RecordingsRoot != "/home/u/.meetmd" {
+		t.Errorf("RecordingsRoot = %q, want /home/u/.meetmd", c.RecordingsRoot)
+	}
+	if c.LegacyOutputRoot != "" {
+		t.Errorf("LegacyOutputRoot should be cleared, got %q", c.LegacyOutputRoot)
+	}
+}
+
 func TestStoreGetSet(t *testing.T) {
 	s := NewStore(Config{Port: 1})
 	if s.Get().Port != 1 {

@@ -13,7 +13,7 @@ import (
 )
 
 func newTestManager(root string) *Manager {
-	return New(config.NewStore(config.Config{OutputRoot: root}), audio.Stub{},
+	return New(config.NewStore(config.Config{RecordingsRoot: root}), audio.Stub{},
 		func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
 }
 
@@ -30,8 +30,8 @@ func TestStopRoutesOutputByProject(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	// "Bora" is sanitized to "bora" and becomes a subfolder of the root.
-	wantDir := filepath.Join(root, "bora")
+	// "Bora" is sanitized to "bora" and becomes a subfolder of meetings/.
+	wantDir := filepath.Join(root, "meetings", "bora")
 	if filepath.Dir(res.SessionDir) != wantDir {
 		t.Errorf("session dir = %s, want under %s", res.SessionDir, wantDir)
 	}
@@ -59,15 +59,16 @@ func TestStopNoProjectUsesRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if filepath.Dir(res.SessionDir) != root {
-		t.Errorf("session dir parent = %s, want %s", filepath.Dir(res.SessionDir), root)
+	wantParent := filepath.Join(root, "meetings")
+	if filepath.Dir(res.SessionDir) != wantParent {
+		t.Errorf("session dir parent = %s, want %s", filepath.Dir(res.SessionDir), wantParent)
 	}
 }
 
 func TestStartNoteWritesToNotes(t *testing.T) {
 	root := t.TempDir()
 	notes := filepath.Join(root, "notes")
-	mgr := New(config.NewStore(config.Config{OutputRoot: root, NotesRoot: notes}),
+	mgr := New(config.NewStore(config.Config{RecordingsRoot: root}),
 		audio.Stub{}, func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
 	ctx := context.Background()
 
@@ -95,21 +96,6 @@ func TestStartNoteWritesToNotes(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "kind: note") {
 		t.Errorf("note missing kind frontmatter:\n%s", body)
-	}
-}
-
-func TestCommonDir(t *testing.T) {
-	cases := []struct{ a, b, want string }{
-		{"/Users/rob/.meetmd/recordings/meetings", "/Users/rob/.meetmd/recordings/notes", "/Users/rob/.meetmd/recordings"},
-		{"/Users/rob/.meetmd/recordings/meetings", "/Users/rob/.meetmd/recordings/meetings", "/Users/rob/.meetmd/recordings/meetings"},
-		{"/var/data", "", "/var/data"},
-		{"", "/var/data", "/var/data"},
-		{"/a/b", "/c/d", "/"},
-	}
-	for _, c := range cases {
-		if got := commonDir(c.a, c.b); got != c.want {
-			t.Errorf("commonDir(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
-		}
 	}
 }
 
