@@ -39,12 +39,12 @@ swiftc -O -target "$SWIFT_TARGET" "$ROOT/menubar/MeetMDBar.swift" -o "$MACOS/Mee
 echo "==> compilando helper de áudio (Swift, arm64 / ScreenCaptureKit)"
 swiftc -O -target "$SWIFT_TARGET" "$ROOT/spike/macos-audio/SystemAudioRecorder.swift" -o "$MACOS/system-audio-recorder"
 
-echo "==> compilando bridge (Go)"
-# external linkmode: stamp LC_UUID (Go 1.21 + macOS recente). No-op em Go >= 1.22.
-# Nota: bridge sai x86_64 (Go amd64/Rosetta); vira arm64 ao migrar o toolchain (#7).
+echo "==> compilando bridge (Go, arm64)"
+# arm64 nativo (sem Rosetta), alinhado ao resto do bundle. Go >= 1.24 já emite
+# LC_UUID com o linker interno, então não precisa mais do linkmode externo (#7).
 # Nome "meetmd-bridge" (não "meetmd"): o filesystem do macOS é case-insensitive e
 # "meetmd" colidiria com o executável principal "MeetMD".
-( cd "$ROOT/bridge" && go build -ldflags=-linkmode=external -o "$MACOS/meetmd-bridge" ./cmd/meetmd )
+( cd "$ROOT/bridge" && GOOS=darwin GOARCH=arm64 go build -o "$MACOS/meetmd-bridge" ./cmd/meetmd )
 
 echo "==> whisper.cpp estático + Metal (binário único, autocontido)"
 WHISPER_STATIC="$WHISPER_SRC/build-static"

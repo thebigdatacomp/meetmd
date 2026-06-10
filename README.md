@@ -45,7 +45,7 @@ Detalhes e tradeoffs em [docs/specs/2026-06-08-architecture.md](docs/specs/2026-
 
 ## Para testers (macOS)
 
-> Requer **Apple Silicon**, Go 1.21+ e Swift (Xcode CLT).
+> Requer **Apple Silicon**, Go 1.21+ (o toolchain 1.25 é baixado automaticamente via `GOTOOLCHAIN`) e Swift (Xcode CLT).
 
 ### 1. Pré-requisitos (uma vez)
 

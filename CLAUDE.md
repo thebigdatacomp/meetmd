@@ -24,7 +24,7 @@ Captura reuniões e grava a transcrição estruturada em Markdown num diretório
 
 **Fluxo:** detecção (extensão/AppleScript) ou comando manual → bridge inicia o helper → captura sistema+mic → no stop, whisper transcreve cada canal em paralelo (Você vs Participantes) → escreve `meeting/transcript/summary/actions.md` + `INDEX.md` por projeto.
 
-**Stack:** Go 1.21 (CI em 1.22) + Swift (helper + menu-bar) + whisper.cpp Metal + WebExtension MV3.
+**Stack:** Go 1.25 (bridge arm64 nativo) + Swift (helper + menu-bar) + whisper.cpp Metal + WebExtension MV3.
 
 **Decisões-chave** (ver `docs/specs/`):
 - Captura no nível do SO → agnóstica de navegador + pega todos os participantes; mic em 2º canal → diarização "Você vs Participantes".
