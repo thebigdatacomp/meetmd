@@ -30,6 +30,9 @@ func loadPCM16(path string) (samples []int16, rate int, err error) {
 		switch id {
 		case "fmt ":
 			if size >= 16 {
+				if format := binary.LittleEndian.Uint16(data[body : body+2]); format != 1 {
+					return nil, 0, fmt.Errorf("unsupported WAV format %d (want PCM)", format)
+				}
 				channels = int(binary.LittleEndian.Uint16(data[body+2 : body+4]))
 				rate = int(binary.LittleEndian.Uint32(data[body+4 : body+8]))
 				bits = int(binary.LittleEndian.Uint16(data[body+14 : body+16]))

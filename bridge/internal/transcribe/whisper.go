@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,13 +18,20 @@ import (
 const LanguageAuto = "auto"
 
 // Silence-filter thresholds for the mic channel (16-bit PCM RMS). A segment is
-// kept when its loudness is at least relFactor of the loudest segment, and above
-// a small absolute floor. This drops whisper's hallucinations over near-silence
-// (which sit ~10x below real speech) without a VAD pass — see issue on mic
-// timestamp drift. Tunable if real recordings need it.
+// kept when its loudness is at least relFactor of the speech level (a high
+// percentile, not the max, so a lone loud transient doesn't drop quiet speech)
+// AND above a small absolute floor (which catches the case where the user never
+// speaks, so there is no speech level to anchor the relative test). These drop
+// whisper's hallucinations over near-silence (~10x below real speech) without a
+// VAD pass — see the issue on mic timestamp drift. Tuned on a narrow sample;
+// adjust if real recordings lose quiet speech or keep noisy hallucinations.
 const (
 	silenceRelFactor = 0.15
-	silenceAbsFloor  = 200.0
+	silenceAbsFloor  = 350.0
+	// minRMSWindow is the fallback span when whisper emits a zero/negative-length
+	// segment (to <= from, which it does for very short or final words): measuring
+	// a real window keeps the segment from being dropped as "silent" by accident.
+	minRMSWindow = 300 * time.Millisecond
 )
 
 // Whisper transcribes audio with the local whisper.cpp CLI (whisper-cli).
@@ -103,27 +112,35 @@ func (w Whisper) run(ctx context.Context, wavPath string) ([]seg, error) {
 	return parseWhisperJSON(data)
 }
 
-// dropSilent removes segments whose audio is near-silent (whisper hallucinations
-// over a mic that's mostly quiet). It fails open: if the WAV can't be read, every
-// segment is kept rather than risk discarding real speech.
+// dropSilent removes segments whose audio is near-silent — whisper's
+// hallucinations over a mic that's mostly quiet. This is a loudness heuristic,
+// not a speech detector: it reliably drops silence-driven hallucinations but
+// cannot tell quiet speech from loud non-speech, so background music or a noisy
+// room can still let a hallucination through (the VAD on the system channel
+// would not). It fails open: if the WAV can't be read, every segment is kept
+// rather than risk discarding real speech.
 func dropSilent(wavPath string, segs []seg) []seg {
 	if len(segs) == 0 {
 		return segs
 	}
 	samples, rate, err := loadPCM16(wavPath)
-	if err != nil || len(samples) == 0 {
+	if err != nil {
+		log.Printf("transcribe: loudness filter skipped (%v) — keeping all mic segments", err)
+		return segs
+	}
+	if len(samples) == 0 {
 		return segs
 	}
 	rms := make([]float64, len(segs))
-	var peak float64
 	for i, s := range segs {
-		rms[i] = windowRMS(samples, rate, s.start, s.end)
-		if rms[i] > peak {
-			peak = rms[i]
+		end := s.end
+		if end <= s.start {
+			end = s.start + minRMSWindow
 		}
+		rms[i] = windowRMS(samples, rate, s.start, end)
 	}
 	threshold := silenceAbsFloor
-	if rel := peak * silenceRelFactor; rel > threshold {
+	if rel := loudLevel(rms) * silenceRelFactor; rel > threshold {
 		threshold = rel
 	}
 	kept := make([]seg, 0, len(segs))
@@ -133,6 +150,18 @@ func dropSilent(wavPath string, segs []seg) []seg {
 		}
 	}
 	return kept
+}
+
+// loudLevel returns the 90th-percentile RMS as the "speech loudness" reference,
+// so a single loud transient (cough, mic bump) doesn't inflate the threshold and
+// drop genuine quiet speech the way the raw maximum would.
+func loudLevel(rms []float64) float64 {
+	if len(rms) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), rms...)
+	sort.Float64s(sorted)
+	return sorted[(len(sorted)-1)*9/10]
 }
 
 // whisperOutput mirrors the subset of whisper.cpp's JSON we consume.

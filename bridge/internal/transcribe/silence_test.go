@@ -75,6 +75,33 @@ func TestDropSilent(t *testing.T) {
 	}
 }
 
+func TestDropSilentKeepsZeroLengthSegment(t *testing.T) {
+	const rate = 16000
+	wav := writeWAV(t, tone(rate, 5000)) // 1s of loud audio
+	// whisper can emit to == from for short/final words; the segment must still be
+	// measured (over a fallback window) and kept, not dropped as silent.
+	segs := []seg{{500 * time.Millisecond, 500 * time.Millisecond, "short"}}
+	if kept := dropSilent(wav, segs); len(kept) != 1 {
+		t.Errorf("zero-length segment over loud audio should be kept, got %d", len(kept))
+	}
+}
+
+func TestDropSilentTransientKeepsQuietSpeech(t *testing.T) {
+	const rate = 16000
+	// quiet real speech (RMS ~800) next to a loud transient (RMS ~20000). A
+	// max-based threshold (0.15*20000=3000) would drop the 800 speech; the
+	// 90th-percentile reference keeps it.
+	wav := writeWAV(t, tone(rate, 800), tone(rate, 20000))
+	segs := []seg{
+		{0, time.Second, "quiet speech"},
+		{time.Second, 2 * time.Second, "loud bump"},
+	}
+	kept := dropSilent(wav, segs)
+	if len(kept) != 2 {
+		t.Fatalf("kept %d, want 2 (quiet speech must survive a loud transient): %+v", len(kept), kept)
+	}
+}
+
 func TestDropSilentFailsOpen(t *testing.T) {
 	segs := []seg{{0, time.Second, "keep me"}}
 	if got := dropSilent("/no/such/file.wav", segs); len(got) != 1 {
