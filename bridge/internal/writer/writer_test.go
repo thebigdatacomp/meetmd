@@ -95,6 +95,51 @@ func TestTranscriptContentEN(t *testing.T) {
 	}
 }
 
+func TestWriteNote(t *testing.T) {
+	root := t.TempDir()
+	note := model.Meeting{
+		ID:        "2026-06-10-1430-note",
+		StartedAt: time.Date(2026, 6, 10, 14, 30, 0, 0, time.UTC),
+	}
+	segs := []model.Segment{
+		{Speaker: model.SpeakerYou, Text: "Lembrar de revisar o PR amanhã."},
+		{Speaker: model.SpeakerYou, Text: "E responder o Alessandro."},
+	}
+	res, err := WriteNote(root, note, segs, "pt")
+	if err != nil {
+		t.Fatalf("WriteNote: %v", err)
+	}
+	if len(res.Files) != 1 || res.Files[0] != "2026-06-10-1430-note.md" {
+		t.Fatalf("unexpected files: %v", res.Files)
+	}
+	body := readFile(t, filepath.Join(root, res.Files[0]))
+	if !strings.Contains(body, "kind: note") {
+		t.Errorf("note missing frontmatter kind, got:\n%s", body)
+	}
+	if !strings.Contains(body, "# Nota de voz —") {
+		t.Errorf("note missing localized title, got:\n%s", body)
+	}
+	if !strings.Contains(body, "Lembrar de revisar o PR amanhã. E responder o Alessandro.") {
+		t.Errorf("note missing joined transcript, got:\n%s", body)
+	}
+	if strings.Contains(body, "Você:") || strings.Contains(body, "[00:") {
+		t.Errorf("note should not carry speaker/timestamp labels, got:\n%s", body)
+	}
+}
+
+func TestWriteNoteEmpty(t *testing.T) {
+	root := t.TempDir()
+	note := model.Meeting{ID: "n", StartedAt: time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)}
+	res, err := WriteNote(root, note, nil, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readFile(t, filepath.Join(root, res.Files[0]))
+	if !strings.Contains(body, "no speech detected") {
+		t.Errorf("empty note missing localized no-speech message, got:\n%s", body)
+	}
+}
+
 func TestIndexIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 	m := sampleMeeting()

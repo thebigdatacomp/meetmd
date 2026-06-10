@@ -65,6 +65,20 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleNoteStart begins a quick voice note (mic-only). It takes no body — a
+// note carries no title/project/participants, just the transcribed text.
+func (s *Server) handleNoteStart(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	note, err := s.mgr.StartNote(ctx(r))
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"sessionId": note.ID})
+}
+
 func (s *Server) handleStop(w http.ResponseWriter, r *http.Request, id string) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return

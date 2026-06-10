@@ -169,6 +169,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private var online = false
     private var state: State = .idle
+    private var kind = "" // "meeting" | "note" while a session is active
     private var sessionID: String?
     private var title = ""
     private var outputRoot = ""
@@ -215,6 +216,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func apply(_ obj: [String: Any]) {
         state = State(rawValue: obj["state"] as? String ?? "idle") ?? .idle
+        kind = obj["kind"] as? String ?? ""
         outputRoot = obj["outputRoot"] as? String ?? ""
 
         // The bridge resolves ui_language (incl. "auto") to "pt"/"en"; honor it
@@ -288,6 +290,18 @@ final class AppController: NSObject, NSApplicationDelegate {
         startSession(title: title, project: input.project, platform: "manual")
     }
 
+    // startNote begins a quick voice note: mic-only, no prompt, lands in the inbox.
+    @objc private func startNote() {
+        request("POST", "/notes/start") { [weak self] data, ok in
+            guard let self = self else { return }
+            if !ok {
+                let message = self.errorMessage(from: data) ?? tr("Falha ao iniciar a nota.", "Failed to start the note.")
+                DispatchQueue.main.async { self.showError(message) }
+            }
+            self.poll()
+        }
+    }
+
     // startSession posts a start request and surfaces any error. failCode, when
     // set, marks a detected meeting as dismissed so a failure doesn't re-prompt.
     private func startSession(title: String, project: String, platform: String, failCode: String? = nil) {
@@ -351,6 +365,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         A transcrição é feita localmente (whisper.cpp) — o áudio não sai da sua \
         máquina. Reuniões do Google Meet no Safari são detectadas \
         automaticamente; ou grave manualmente pelo menu.
+
+        Use também "Nova nota de voz" para ditar uma anotação rápida (só \
+        microfone, sem permissão de tela) direto para a sua caixa de entrada.
         """, """
         Captures your meetings and generates the transcript in Markdown, \
         organized by project and ready for Claude to process.
@@ -358,6 +375,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         Transcription runs locally (whisper.cpp) — the audio never leaves your \
         machine. Google Meet meetings in Safari are detected automatically; or \
         record manually from the menu.
+
+        Use "New voice note" to dictate a quick note (mic only, no screen \
+        permission) straight to your inbox.
         """)
         alert.icon = ClaudeIcon.image(for: .recording, online: true, height: 76) // mascote gravando
         alert.addButton(withTitle: "OK")
@@ -411,6 +431,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             switch state {
             case .idle:
                 menu.addItem(item(tr("Iniciar gravação", "Start recording"), #selector(startManual), "r", "record.circle"))
+                menu.addItem(item(tr("Nova nota de voz", "New voice note"), #selector(startNote), "n", "mic.circle"))
+            case .recording where kind == "note":
+                menu.addItem(item(tr("Parar e salvar nota", "Stop & save note"), #selector(stop), "s", "stop.circle"))
             case .recording:
                 menu.addItem(item(tr("Pausar", "Pause"), #selector(pause), "p", "pause.circle"))
                 menu.addItem(item(tr("Parar e salvar", "Stop & save"), #selector(stop), "s", "stop.circle"))
@@ -432,6 +455,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func headerText() -> String {
         if !online { return tr("Bridge offline", "Bridge offline") }
         switch state {
+        case .recording where kind == "note": return tr("Gravando nota…", "Recording note…")
         case .recording: return tr("Gravando: ", "Recording: ") + displayTitle()
         case .paused: return tr("Pausado: ", "Paused: ") + displayTitle()
         case .processing: return tr("Processando…", "Processing…")

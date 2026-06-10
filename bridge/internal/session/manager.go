@@ -40,6 +40,15 @@ const (
 	StateProcessing State = "processing" // stopped; transcribing/writing
 )
 
+// Kind distinguishes a full meeting recording from a quick voice note. A note
+// is mic-only and writes a lean Markdown file to the inbox.
+type Kind string
+
+const (
+	KindMeeting Kind = "meeting"
+	KindNote    Kind = "note"
+)
+
 // DetectedMeeting is a meeting found in the browser but not yet being recorded;
 // a UI can prompt the user to start. Set by the detector (see internal/detect).
 type DetectedMeeting struct {
@@ -59,6 +68,7 @@ type StartRequest struct {
 // Status snapshots the manager for the /status endpoint.
 type Status struct {
 	State      State            `json:"state"`
+	Kind       Kind             `json:"kind,omitempty"` // "meeting" | "note" while active
 	Meeting    *model.Meeting   `json:"meeting,omitempty"`
 	Detected   *DetectedMeeting `json:"detected,omitempty"`
 	OutputRoot string           `json:"outputRoot"`
@@ -79,6 +89,7 @@ type Manager struct {
 
 	mu         sync.Mutex
 	current    *model.Meeting
+	kind       Kind
 	paused     bool
 	processing bool // stopped, running transcription/write (lock not held meanwhile)
 	detected   *DetectedMeeting
@@ -127,9 +138,34 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, e
 		return model.Meeting{}, fmt.Errorf("start capture: %w", err)
 	}
 	m.current = &meeting
+	m.kind = KindMeeting
 	m.paused = false
 	m.detected = nil
 	return meeting, nil
+}
+
+// StartNote begins a quick voice note: a mic-only recording (no Screen Recording
+// permission) whose output is a lean Markdown file in the inbox.
+func (m *Manager) StartNote(ctx context.Context) (model.Meeting, error) {
+	if m.store.Get().InboxRoot == "" {
+		return model.Meeting{}, ErrEmptyOutput
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.current != nil {
+		return model.Meeting{}, ErrBusy
+	}
+
+	note := model.Meeting{Platform: model.PlatformManual, StartedAt: m.now()}
+	note.ID = note.StartedAt.Format("2006-01-02-1504") + "-note"
+
+	if err := m.capturer.StartMicOnly(ctx, note.ID); err != nil {
+		return model.Meeting{}, fmt.Errorf("start mic capture: %w", err)
+	}
+	m.current = &note
+	m.kind = KindNote
+	m.paused = false
+	return note, nil
 }
 
 // Stop ends the active recording, transcribes it, and writes the output.
@@ -139,6 +175,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (model.Meeting, e
 // last state (e.g. the icon stuck on "recording") for the whole transcription.
 func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 	m.mu.Lock()
+	kind := m.kind
 	meeting, err := m.takeCurrent(id)
 	if err != nil {
 		m.mu.Unlock()
@@ -161,7 +198,12 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 		return writer.Result{}, err
 	}
 
-	res, err := writer.Write(outputRoot(cfg.OutputRoot, meeting.Project), meeting, segments, cfg.ResolvedUILang())
+	var res writer.Result
+	if kind == KindNote {
+		res, err = writer.WriteNote(cfg.InboxRoot, meeting, segments, cfg.ResolvedUILang())
+	} else {
+		res, err = writer.Write(outputRoot(cfg.OutputRoot, meeting.Project), meeting, segments, cfg.ResolvedUILang())
+	}
 	if err != nil {
 		return writer.Result{}, err
 	}
@@ -190,7 +232,7 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cfg := m.store.Get()
-	st := Status{State: StateIdle, OutputRoot: cfg.OutputRoot, UILanguage: cfg.ResolvedUILang(), Detected: m.detected}
+	st := Status{State: StateIdle, Kind: m.kind, OutputRoot: cfg.OutputRoot, UILanguage: cfg.ResolvedUILang(), Detected: m.detected}
 	switch {
 	case m.current != nil:
 		meeting := *m.current
@@ -276,6 +318,7 @@ func (m *Manager) takeCurrent(id string) (model.Meeting, error) {
 	}
 	meeting := *m.current
 	m.current = nil
+	m.kind = ""
 	m.paused = false
 	return meeting, nil
 }

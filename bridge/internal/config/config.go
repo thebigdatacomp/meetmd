@@ -33,6 +33,7 @@ const (
 // Config is the bridge's runtime configuration.
 type Config struct {
 	OutputRoot string     `yaml:"output_root"`
+	InboxRoot  string     `yaml:"inbox_root"` // quick voice notes land here (not meetings/)
 	Port       int        `yaml:"port"`
 	Language   string     `yaml:"language"`    // whisper transcription language (auto|pt|es|en|...)
 	UILanguage string     `yaml:"ui_language"` // UI + .md output language (auto|pt|en)
@@ -68,6 +69,7 @@ type Audio struct {
 func Default() Config {
 	return Config{
 		OutputRoot: defaultOutputRoot(),
+		InboxRoot:  defaultInboxRoot(),
 		Port:       defaultPort,
 		Language:   defaultLanguage,
 		UILanguage: defaultUILang,
@@ -101,6 +103,9 @@ func (c *Config) applyDefaults() {
 	d := Default()
 	if c.OutputRoot == "" {
 		c.OutputRoot = d.OutputRoot
+	}
+	if c.InboxRoot == "" {
+		c.InboxRoot = d.InboxRoot
 	}
 	if c.Port == 0 {
 		c.Port = d.Port
@@ -165,6 +170,10 @@ func DefaultPath() string {
 
 func defaultOutputRoot() string {
 	return filepath.Join(homeDir(), configDirName, "meetings")
+}
+
+func defaultInboxRoot() string {
+	return filepath.Join(homeDir(), configDirName, "inbox")
 }
 
 func defaultModelPath() string {

@@ -45,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/sessions/start", s.handleStart)
+	mux.HandleFunc("/notes/start", s.handleNoteStart)  // quick voice note (mic-only)
 	mux.HandleFunc(sessionPrefix, s.handleSessionByID) // /sessions/{id}/{action}
 	mux.HandleFunc("/settings", s.handleSettings)      // GET/PUT user-facing settings
 	mux.Handle("/", uiServer())                        // control panel (least specific)

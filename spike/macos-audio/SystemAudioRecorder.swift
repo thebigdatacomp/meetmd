@@ -36,6 +36,10 @@ private enum Output {
 final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let outputURL: URL
     private let micURL: URL? // when set, the mic is captured to a second channel
+    // When false (mic-only mode, e.g. quick voice notes) ScreenCaptureKit is not
+    // started at all, so no Screen Recording permission is needed — only the mic
+    // is recorded, to outputURL.
+    private let captureSystem: Bool
     private var stream: SCStream?
     private var audioFile: AVAudioFile?
     private var samplesWritten: AVAudioFramePosition = 0
@@ -43,6 +47,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     // Mic capture (the user's own voice, which never reaches system output).
     private var engine: AVAudioEngine?
     private var micFile: AVAudioFile?
+    private var micSamplesWritten: AVAudioFramePosition = 0
 
     // paused is read on the audio queue and written from signal handlers, so it
     // is guarded by a lock. While paused, samples are dropped, which keeps the
@@ -54,12 +59,28 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         set { lock.lock(); pausedFlag = newValue; lock.unlock() }
     }
 
-    init(outputURL: URL, micURL: URL?) {
+    init(outputURL: URL, micURL: URL?, captureSystem: Bool = true) {
         self.outputURL = outputURL
         self.micURL = micURL
+        self.captureSystem = captureSystem
     }
 
     func start() async throws {
+        if captureSystem {
+            try await startSystem()
+            // Mic failure (e.g. no permission) must not abort the system capture.
+            do {
+                try startMic(to: micURL)
+            } catch {
+                FileHandle.standardError.write("mic indisponível: \(error)\n".data(using: .utf8)!)
+            }
+        } else {
+            // Mic-only: the mic IS the recording, so a failure here is fatal.
+            try startMic(to: outputURL)
+        }
+    }
+
+    private func startSystem() async throws {
         // A display is required to build a content filter even for audio-only capture.
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
@@ -81,19 +102,12 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
         try await stream.startCapture()
         self.stream = stream
-
-        // Mic failure (e.g. no permission) must not abort the system capture.
-        do {
-            try startMic()
-        } catch {
-            FileHandle.standardError.write("mic indisponível: \(error)\n".data(using: .utf8)!)
-        }
     }
 
     // startMic taps the default input device and writes it, resampled to 16kHz
-    // mono, to a separate WAV. The same `paused` flag drops mic samples too.
-    private func startMic() throws {
-        guard let micURL = micURL else { return }
+    // mono, to `dest`. The same `paused` flag drops mic samples too.
+    private func startMic(to dest: URL?) throws {
+        guard let micURL = dest else { return }
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -121,6 +135,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             }
             if convError == nil, out.frameLength > 0 {
                 try? file.write(from: out)
+                self.micSamplesWritten += AVAudioFramePosition(out.frameLength)
             }
         }
         try engine.start()
@@ -157,7 +172,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         FileHandle.standardError.write("stream stopped: \(error)\n".data(using: .utf8)!)
     }
 
-    var seconds: Double { Double(samplesWritten) / Output.sampleRate }
+    var seconds: Double { Double(max(samplesWritten, micSamplesWritten)) / Output.sampleRate }
 
     enum RecorderError: Error { case noDisplay, micUnavailable }
 }
@@ -186,10 +201,13 @@ func fail(_ message: String) -> Never {
 }
 
 // Usage:
-//   system-audio-recorder <output.wav> [seconds] [--mic <mic.wav>]
-//     no seconds → record until SIGTERM/SIGINT; --mic also captures the mic.
+//   system-audio-recorder <output.wav> [seconds] [--mic <mic.wav>] [--mic-only]
+//     no seconds → record until SIGTERM/SIGINT; --mic also captures the mic;
+//     --mic-only records ONLY the mic to <output.wav> (no ScreenCaptureKit, so
+//     no Screen Recording permission) — used for quick voice notes.
 var positional: [String] = []
 var micPath: String?
+var micOnly = false
 do {
     let argv = CommandLine.arguments
     var i = 1
@@ -197,6 +215,9 @@ do {
         if argv[i] == "--mic", i + 1 < argv.count {
             micPath = argv[i + 1]
             i += 2
+        } else if argv[i] == "--mic-only" {
+            micOnly = true
+            i += 1
         } else {
             positional.append(argv[i])
             i += 1
@@ -204,7 +225,7 @@ do {
     }
 }
 guard let outPath = positional.first else {
-    fail("usage: system-audio-recorder <output.wav> [seconds] [--mic <mic.wav>]")
+    fail("usage: system-audio-recorder <output.wav> [seconds] [--mic <mic.wav>] [--mic-only]")
 }
 let outputURL = URL(fileURLWithPath: outPath)
 let micURL = micPath.map { URL(fileURLWithPath: $0) }
@@ -214,7 +235,10 @@ guard #available(macOS 13.0, *) else {
     fail("ScreenCaptureKit audio capture requires macOS 13+")
 }
 
-let recorder = SystemAudioRecorder(outputURL: outputURL, micURL: micURL)
+// Mic-only ignores --mic (the single positional WAV is the mic recording).
+let recorder = SystemAudioRecorder(outputURL: outputURL,
+                                   micURL: micOnly ? nil : micURL,
+                                   captureSystem: !micOnly)
 
 @Sendable func stopAndExit() {
     Task {
@@ -227,7 +251,8 @@ let recorder = SystemAudioRecorder(outputURL: outputURL, micURL: micURL)
 Task {
     do {
         let mode = duration > 0 ? "\(Int(duration))s" : "until signal"
-        print("recording system audio (\(mode)) → \(outputURL.path)")
+        let source = micOnly ? "mic only" : "system audio"
+        print("recording \(source) (\(mode)) → \(outputURL.path)")
         try await recorder.start()
         if duration > 0 {
             try await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))

@@ -64,6 +64,40 @@ func TestStopNoProjectUsesRoot(t *testing.T) {
 	}
 }
 
+func TestStartNoteWritesToInbox(t *testing.T) {
+	root := t.TempDir()
+	inbox := filepath.Join(root, "inbox")
+	mgr := New(config.NewStore(config.Config{OutputRoot: root, InboxRoot: inbox}),
+		audio.Stub{}, func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
+	ctx := context.Background()
+
+	note, err := mgr.StartNote(ctx)
+	if err != nil {
+		t.Fatalf("StartNote: %v", err)
+	}
+	if mgr.Status().Kind != KindNote {
+		t.Errorf("status kind = %q, want note", mgr.Status().Kind)
+	}
+	res, err := mgr.Stop(ctx, note.ID)
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// The note lands in the inbox (not meetings/), as a single .md file.
+	if res.SessionDir != inbox {
+		t.Errorf("note dir = %s, want %s", res.SessionDir, inbox)
+	}
+	if len(res.Files) != 1 || !strings.HasSuffix(res.Files[0], "-note.md") {
+		t.Fatalf("unexpected note files: %v", res.Files)
+	}
+	body, err := os.ReadFile(filepath.Join(inbox, res.Files[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "kind: note") {
+		t.Errorf("note missing kind frontmatter:\n%s", body)
+	}
+}
+
 func TestSanitizeProject(t *testing.T) {
 	cases := map[string]string{
 		"Bora":        "bora",
