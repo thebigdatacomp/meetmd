@@ -61,7 +61,7 @@ xcode-select --install      # swiftc
 open menubar/MeetMD.app      # ícone (mascote do Claude) na barra — sobe o bridge sozinho, sem terminal
 ```
 
-A 1ª vez baixa os modelos (~490MB) e compila o whisper (alguns minutos); depois fica cacheado. O `.app` é **autocontido** (resolve whisper/modelos do bundle) — **não precisa de config**. Crie `~/.meetmd/config.yaml` só pra customizar (ex.: `output_root`, `language`).
+A 1ª vez baixa os modelos (~490MB) e compila o whisper (alguns minutos); depois fica cacheado. O `.app` é **autocontido** (resolve whisper/modelos do bundle) — **não precisa de config** (ver [Configuração](#configuração-opcional)).
 
 ### 3. Permissões (na 1ª gravação) — conceda ao **MeetMD**
 - **Gravação de Tela** → participantes · **Microfone** → sua voz · **Automação ▸ Safari** → detecção do Meet.
@@ -71,7 +71,18 @@ Como o app tem identidade própria, as permissões **colam** (não somem entre e
 ### 4. Usar
 - **Auto:** entre num Google Meet no **Safari** → o app pergunta *"Gravar?"* → **Gravar**.
 - **Manual:** clique no ícone na barra → **Iniciar gravação**.
-- Os `.md` aparecem em `~/.meetmd/meetings/[<projeto>/]`. Abra a pasta no Claude e peça resumo/ações.
+- **Nota de voz:** ícone na barra → **Nova nota de voz** → dite uma anotação rápida (só microfone, **sem** permissão de tela) → **Parar e salvar nota**.
+- A saída vai pra `~/.meetmd/recordings/`: reuniões em `meetings/[<projeto>/]`, notas em `notes/`. Abra a pasta no Claude e peça resumo/ações. ("Abrir pasta dos arquivos" no menu abre `recordings/`.)
+
+### Configuração (opcional)
+O `.app` é **autocontido** e roda **sem nenhum config** — whisper, modelos e helper são resolvidos do próprio bundle. O `~/.meetmd/config.yaml` **não é gerado na instalação**: ele só passa a existir quando você **salva em Configurações** (ou cria à mão), e os caminhos são derivados do **seu** home em runtime (nunca hardcoded). Chaves úteis pra customizar:
+
+| Chave | Default | Pra quê |
+|-------|---------|---------|
+| `output_root` | `~/.meetmd/recordings/meetings` | onde as reuniões são salvas |
+| `notes_root` | `~/.meetmd/recordings/notes` | onde as notas de voz são salvas |
+| `language` | `auto` | idioma da transcrição (whisper) |
+| `ui_language` | `auto` | idioma da UI e dos `.md` (`auto` segue o SO, ou `pt`/`en`) |
 
 ### Iniciar no login (opcional)
 Ajustes do Sistema ▸ Geral ▸ **Itens de Início** → adicione `MeetMD.app`. (Substitui o antigo `meetmd install`, que rodava o binário cru e tinha as permissões negadas pelo macOS.)
@@ -87,4 +98,4 @@ Nesse modo as permissões ficam no VS Code/terminal e o bridge não usa o bundle
 
 ## Status
 
-Funcional no macOS via `.app` **autocontido** (captura sistema+mic, transcrição local Metal, diarização Você/Participantes, menu-bar, settings, hot-reload, whisper+modelos bundlados). Falta pra distribuir: assinatura Developer ID + notarização (#4). Windows/Linux: capturer pendente (`#1`/`#2`).
+Funcional no macOS via `.app` **autocontido** (captura sistema+mic, transcrição local Metal, diarização Você/Participantes, nota de voz mic-only, menu-bar, settings, hot-reload, whisper+modelos bundlados). Falta pra distribuir: assinatura Developer ID + notarização (#4). Windows/Linux: capturer pendente (`#1`/`#2`).
