@@ -77,21 +77,26 @@ for b in MeetMD meetmd-bridge whisper-cli system-audio-recorder; do
 done
 
 echo "==> ícone do app (.icns, renderizado do mascote)"
-ICONSET="$(mktemp -d)/MeetMD.iconset"
-mkdir -p "$ICONSET"
-gen_icon() { "$MACOS/MeetMD" --app-icon "$ICONSET/icon_$1.png" "$2"; }
-gen_icon 16x16 16
-gen_icon 16x16@2x 32
-gen_icon 32x32 32
-gen_icon 32x32@2x 64
-gen_icon 128x128 128
-gen_icon 128x128@2x 256
-gen_icon 256x256 256
-gen_icon 256x256@2x 512
-gen_icon 512x512 512
-gen_icon 512x512@2x 1024
-iconutil -c icns "$ICONSET" -o "$RES/AppIcon.icns"
-rm -rf "$(dirname "$ICONSET")"
+# Rendering runs the GUI binary, which needs a window-server session. Keep it
+# non-fatal: a missing icon is cosmetic (Finder falls back to a generic one) and
+# must not abort the whole build (e.g. headless/CI). Cleans up its temp dir.
+generate_app_icon() {
+	local tmp iconset s
+	tmp="$(mktemp -d)"
+	iconset="$tmp/MeetMD.iconset"
+	mkdir -p "$iconset"
+	for s in 16x16:16 16x16@2x:32 32x32:32 32x32@2x:64 128x128:128 \
+		128x128@2x:256 256x256:256 256x256@2x:512 512x512:512 512x512@2x:1024; do
+		"$MACOS/MeetMD" --app-icon "$iconset/icon_${s%%:*}.png" "${s##*:}" || { rm -rf "$tmp"; return 1; }
+	done
+	iconutil -c icns "$iconset" -o "$RES/AppIcon.icns" || { rm -rf "$tmp"; return 1; }
+	rm -rf "$tmp"
+}
+if generate_app_icon; then
+	echo "    AppIcon.icns gerado"
+else
+	echo "    AVISO: ícone do app não gerado (sem sessão gráfica?) — bundle usa ícone genérico"
+fi
 
 echo "==> Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST

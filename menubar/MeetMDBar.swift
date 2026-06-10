@@ -302,10 +302,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Snooze only manifests while idle: an active recording always wins the UI
+    // (so its Stop action and "recording" state stay visible and reachable).
+    private var snoozing: Bool { asleep && state == .idle }
+
     private func updateIcon() {
         let button = statusItem.button
         button?.title = ""
-        button?.image = ClaudeIcon.image(for: state, online: online, asleep: asleep)
+        button?.image = ClaudeIcon.image(for: state, online: online, asleep: snoozing)
         button?.imagePosition = .imageOnly
     }
 
@@ -382,10 +386,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         return obj["message"] as? String
     }
 
-    private func showError(_ message: String) {
+    private func showError(_ message: String) { showAlert(message, style: .warning) }
+    private func showInfo(_ message: String) { showAlert(message, style: .informational) }
+
+    private func showAlert(_ message: String, style: NSAlert.Style) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.alertStyle = .warning
+        alert.alertStyle = style
         alert.messageText = "MeetMD"
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
@@ -485,7 +492,18 @@ final class AppController: NSObject, NSApplicationDelegate {
     // --- snooze & login item ------------------------------------------------
 
     @objc private func toggleSleep() {
-        request("POST", asleep ? "/wake" : "/sleep") { [weak self] _, _ in self?.poll() }
+        asleep.toggle() // optimistic: flip now, the next poll() reconciles
+        updateIcon()
+        rebuildMenu()
+        request("POST", asleep ? "/sleep" : "/wake") { [weak self] _, _ in self?.poll() }
+    }
+
+    // loginItemRegistered: enabled OR requiresApproval both mean "the user asked
+    // for it" — requiresApproval just needs a one-time approval in System Settings.
+    @available(macOS 13.0, *)
+    private var loginItemRegistered: Bool {
+        let s = SMAppService.mainApp.status
+        return s == .enabled || s == .requiresApproval
     }
 
     // loginItemMenuItem reflects and toggles whether MeetMD launches at login,
@@ -493,7 +511,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func loginItemMenuItem() -> NSMenuItem {
         let mi = item(tr("Abrir no login", "Open at login"), #selector(toggleLoginItem), "", "power.dotted")
         if #available(macOS 13.0, *) {
-            mi.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            mi.state = loginItemRegistered ? .on : .off
         } else {
             mi.isEnabled = false
         }
@@ -503,14 +521,18 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func toggleLoginItem() {
         guard #available(macOS 13.0, *) else { return }
         do {
-            if SMAppService.mainApp.status == .enabled {
+            if loginItemRegistered {
                 try SMAppService.mainApp.unregister()
             } else {
                 try SMAppService.mainApp.register()
+                if SMAppService.mainApp.status == .requiresApproval {
+                    showInfo(tr("Aprove o MeetMD em Ajustes do Sistema ▸ Geral ▸ Itens de Início para ele abrir no login.",
+                                "Approve MeetMD in System Settings ▸ General ▸ Login Items so it opens at login."))
+                }
             }
         } catch {
-            showError(tr("Não foi possível alterar o início no login: \(error.localizedDescription)",
-                         "Couldn't change open-at-login: \(error.localizedDescription)"))
+            showError(tr("Não foi possível alterar o início no login: \(error.localizedDescription). O app precisa estar em /Aplicativos.",
+                         "Couldn't change open-at-login: \(error.localizedDescription). The app must be in /Applications."))
         }
         rebuildMenu()
     }
@@ -522,8 +544,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(disabled(headerText()))
         menu.addItem(.separator())
 
-        if online, asleep {
-            // Snoozing: do nothing but offer to wake.
+        if online, snoozing {
+            // Snoozing (only while idle): do nothing but offer to wake.
             menu.addItem(item(tr("Acordar", "Wake up"), #selector(toggleSleep), "", "sun.max"))
         } else if online {
             switch state {
@@ -543,7 +565,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             menu.addItem(item(tr("Abrir pasta dos arquivos", "Open files folder"), #selector(openFolder), "f", "folder"))
             menu.addItem(item(tr("Configurações…", "Settings…"), #selector(openSettings), ",", "gearshape"))
-            menu.addItem(item(tr("Dormir", "Snooze"), #selector(toggleSleep), "", "moon"))
+            if state == .idle { // snooze only makes sense when there's nothing to record
+                menu.addItem(item(tr("Dormir", "Snooze"), #selector(toggleSleep), "", "moon"))
+            }
         }
         menu.addItem(.separator())
         menu.addItem(loginItemMenuItem())
@@ -554,7 +578,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func headerText() -> String {
         if !online { return tr("Bridge offline", "Bridge offline") }
-        if asleep { return tr("Dormindo (soneca)", "Snoozing") }
+        if snoozing { return tr("Dormindo (soneca)", "Snoozing") }
         switch state {
         case .recording where kind == kindNote: return tr("Gravando nota…", "Recording note…")
         case .recording: return tr("Gravando: ", "Recording: ") + displayTitle()
@@ -818,6 +842,10 @@ func writePNG(_ img: NSImage, _ path: String) {
        let png = rep.representation(using: .png, properties: [:]) {
         try? png.write(to: URL(fileURLWithPath: path))
     }
+}
+// Bring up the AppKit graphics stack before any off-screen text/icon rendering.
+if CommandLine.arguments.count >= 2, CommandLine.arguments[1].hasPrefix("--") {
+    _ = NSApplication.shared
 }
 if CommandLine.arguments.count >= 4, CommandLine.arguments[1] == "--render" {
     let name = CommandLine.arguments[2]
