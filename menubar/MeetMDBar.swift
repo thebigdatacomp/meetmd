@@ -173,6 +173,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var sessionID: String?
     private var title = ""
     private var outputRoot = ""
+    private var filesRoot = "" // folder containing meetings/ and inbox/
     private var detectedCode: String?
     private var detectedTitle = ""
 
@@ -218,6 +219,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = State(rawValue: obj["state"] as? String ?? "idle") ?? .idle
         kind = obj["kind"] as? String ?? ""
         outputRoot = obj["outputRoot"] as? String ?? ""
+        filesRoot = obj["filesRoot"] as? String ?? ""
 
         // The bridge resolves ui_language (incl. "auto") to "pt"/"en"; honor it
         // so a config override drives the menu UI too, not just the .md output.
@@ -343,8 +345,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openFolder() {
-        guard !outputRoot.isEmpty else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: outputRoot))
+        // Open the folder that holds both meetings/ and inbox/ (falls back to the
+        // meetings root if the bridge didn't report a common folder).
+        let path = filesRoot.isEmpty ? outputRoot : filesRoot
+        guard !path.isEmpty else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
     @objc private func openSettings() {

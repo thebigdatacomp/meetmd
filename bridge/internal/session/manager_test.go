@@ -98,6 +98,21 @@ func TestStartNoteWritesToInbox(t *testing.T) {
 	}
 }
 
+func TestCommonDir(t *testing.T) {
+	cases := []struct{ a, b, want string }{
+		{"/Users/rob/.meetmd/meetings", "/Users/rob/.meetmd/inbox", "/Users/rob/.meetmd"},
+		{"/Users/rob/.meetmd/meetings", "/Users/rob/.meetmd/meetings", "/Users/rob/.meetmd/meetings"},
+		{"/var/data", "", "/var/data"},
+		{"", "/var/data", "/var/data"},
+		{"/a/b", "/c/d", "/"},
+	}
+	for _, c := range cases {
+		if got := commonDir(c.a, c.b); got != c.want {
+			t.Errorf("commonDir(%q, %q) = %q, want %q", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestSanitizeProject(t *testing.T) {
 	cases := map[string]string{
 		"Bora":        "bora",

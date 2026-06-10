@@ -72,6 +72,7 @@ type Status struct {
 	Meeting    *model.Meeting   `json:"meeting,omitempty"`
 	Detected   *DetectedMeeting `json:"detected,omitempty"`
 	OutputRoot string           `json:"outputRoot"`
+	FilesRoot  string           `json:"filesRoot"`  // folder containing meetings/ and inbox/
 	UILanguage string           `json:"uiLanguage"` // resolved UI language ("pt"/"en")
 }
 
@@ -232,7 +233,14 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cfg := m.store.Get()
-	st := Status{State: StateIdle, Kind: m.kind, OutputRoot: cfg.OutputRoot, UILanguage: cfg.ResolvedUILang(), Detected: m.detected}
+	st := Status{
+		State:      StateIdle,
+		Kind:       m.kind,
+		OutputRoot: cfg.OutputRoot,
+		FilesRoot:  commonDir(cfg.OutputRoot, cfg.InboxRoot),
+		UILanguage: cfg.ResolvedUILang(),
+		Detected:   m.detected,
+	}
 	switch {
 	case m.current != nil:
 		meeting := *m.current
@@ -340,6 +348,33 @@ func outputRoot(base, project string) string {
 		return base
 	}
 	return filepath.Join(base, project)
+}
+
+// commonDir returns the deepest directory that contains both a and b, so the UI
+// can open a single folder showing meetings/ and inbox/ side by side. With the
+// default layout (~/.meetmd/meetings, ~/.meetmd/inbox) that is ~/.meetmd.
+func commonDir(a, b string) string {
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	as := strings.Split(filepath.Clean(a), string(filepath.Separator))
+	bs := strings.Split(filepath.Clean(b), string(filepath.Separator))
+	n := len(as)
+	if len(bs) < n {
+		n = len(bs)
+	}
+	i := 0
+	for i < n && as[i] == bs[i] {
+		i++
+	}
+	common := strings.Join(as[:i], string(filepath.Separator))
+	if common == "" {
+		return string(filepath.Separator)
+	}
+	return common
 }
 
 // transcribeRecording transcribes whichever channels were captured, labels each
