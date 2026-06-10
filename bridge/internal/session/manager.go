@@ -80,9 +80,10 @@ type Status struct {
 }
 
 // TranscriberFor builds a transcriber from the current config. It is called per
-// recording so config changes (model, language, VAD) take effect without a
-// restart — see config hot-reload.
-type TranscriberFor func(config.Config) transcribe.Transcriber
+// channel so config changes (model, language, VAD) take effect without a restart
+// (config hot-reload). voice selects the mic-channel mode (no VAD + loudness
+// filter); false is the system channel (VAD).
+type TranscriberFor func(cfg config.Config, voice bool) transcribe.Transcriber
 
 // Manager owns the single active session and its dependencies.
 type Manager struct {
@@ -199,7 +200,7 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 
 	cfg := m.store.Get() // read live config (hot-reloadable)
 	rec, capErr := m.capturer.Stop()
-	segments, err := m.transcribeRecording(ctx, m.newTranscriber(cfg), rec, capErr)
+	segments, err := m.transcribeRecording(ctx, cfg, rec, capErr)
 	if err != nil {
 		return writer.Result{}, err
 	}
@@ -359,7 +360,7 @@ func outputRoot(base, project string) string {
 // (system = participants, mic = you), and merges them ordered by start time.
 // The stub capturer reports ErrNotImplemented until real capture exists; that is
 // treated as "no audio" so the pipeline still completes with an empty transcript.
-func (m *Manager) transcribeRecording(ctx context.Context, transcriber transcribe.Transcriber, rec audio.Recording, capErr error) ([]model.Segment, error) {
+func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, rec audio.Recording, capErr error) ([]model.Segment, error) {
 	if errors.Is(capErr, audio.ErrNotImplemented) {
 		return nil, nil
 	}
@@ -370,9 +371,10 @@ func (m *Manager) transcribeRecording(ctx context.Context, transcriber transcrib
 	channels := []struct {
 		wav     string
 		speaker model.Speaker
+		voice   bool // mic channel: no VAD + loudness filter (see TranscriberFor)
 	}{
-		{rec.SystemWav, model.SpeakerOthers},
-		{rec.MicWav, model.SpeakerYou},
+		{rec.SystemWav, model.SpeakerOthers, false},
+		{rec.MicWav, model.SpeakerYou, true},
 	}
 
 	// Transcribe both channels concurrently — each whisper run is the slow part,
@@ -385,9 +387,9 @@ func (m *Manager) transcribeRecording(ctx context.Context, transcriber transcrib
 			continue
 		}
 		wg.Add(1)
-		go func(i int, wav string, speaker model.Speaker) {
+		go func(i int, wav string, speaker model.Speaker, voice bool) {
 			defer wg.Done()
-			segs, err := transcriber.Transcribe(ctx, wav)
+			segs, err := m.newTranscriber(cfg, voice).Transcribe(ctx, wav)
 			if err != nil {
 				errs[i] = err
 				return
@@ -396,7 +398,7 @@ func (m *Manager) transcribeRecording(ctx context.Context, transcriber transcrib
 				segs[j].Speaker = speaker
 			}
 			results[i] = segs
-		}(i, ch.wav, ch.speaker)
+		}(i, ch.wav, ch.speaker, ch.voice)
 	}
 	wg.Wait()
 

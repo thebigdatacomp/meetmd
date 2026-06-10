@@ -7,9 +7,9 @@ import (
 
 func TestParseWhisperJSON(t *testing.T) {
 	data := []byte(`{"transcription":[
-		{"offsets":{"from":4000},"text":" Olá pessoal."},
-		{"offsets":{"from":9000},"text":"   "},
-		{"offsets":{"from":12000},"text":"Vamos começar."}
+		{"offsets":{"from":4000,"to":8000},"text":" Olá pessoal."},
+		{"offsets":{"from":9000,"to":9000},"text":"   "},
+		{"offsets":{"from":12000,"to":15000},"text":"Vamos começar."}
 	]}`)
 
 	segs, err := parseWhisperJSON(data)
@@ -19,14 +19,11 @@ func TestParseWhisperJSON(t *testing.T) {
 	if len(segs) != 2 { // the whitespace-only segment is dropped
 		t.Fatalf("got %d segments, want 2", len(segs))
 	}
-	if segs[0].Start != 4*time.Second || segs[0].Text != "Olá pessoal." {
-		t.Errorf("seg0 = %v / %q", segs[0].Start, segs[0].Text)
+	if segs[0].start != 4*time.Second || segs[0].end != 8*time.Second || segs[0].text != "Olá pessoal." {
+		t.Errorf("seg0 = %v–%v / %q", segs[0].start, segs[0].end, segs[0].text)
 	}
-	if segs[1].Start != 12*time.Second || segs[1].Text != "Vamos começar." {
-		t.Errorf("seg1 = %v / %q", segs[1].Start, segs[1].Text)
-	}
-	if segs[0].Speaker != "" {
-		t.Errorf("speaker should be set by the caller, not the parser")
+	if segs[1].start != 12*time.Second || segs[1].text != "Vamos começar." {
+		t.Errorf("seg1 = %v / %q", segs[1].start, segs[1].text)
 	}
 }
 

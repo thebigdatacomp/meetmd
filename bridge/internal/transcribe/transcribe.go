@@ -29,6 +29,7 @@ type Options struct {
 	ModelPath string // ggml model file for the local engine
 	Language  string // e.g. "pt" or "auto"
 	VADModel  string // optional ggml VAD model (enables silence skipping)
+	Voice     bool   // sparse single-speaker channel (mic): no VAD + loudness filter
 }
 
 // New returns a Transcriber for the given options, plus a human-readable note
@@ -49,9 +50,12 @@ func New(o Options) (Transcriber, string) {
 	}
 	vad := resolveModel(o.VADModel) // optional; empty stays empty
 
-	w := Whisper{BinPath: bin, ModelPath: model, Language: o.Language, VADModel: vad}
+	w := Whisper{BinPath: bin, ModelPath: model, Language: o.Language, VADModel: vad, Voice: o.Voice}
 	note := "whisper local: " + bin
-	if vad != "" {
+	switch {
+	case o.Voice:
+		note += " (mic: no VAD + loudness filter)"
+	case vad != "":
 		note += " (VAD on)"
 	}
 	return w, note
