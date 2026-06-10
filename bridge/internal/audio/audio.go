@@ -25,6 +25,9 @@ type Capturer interface {
 	// Start begins capturing for sessionID. It returns immediately; capture
 	// runs until Stop or Cancel.
 	Start(ctx context.Context, sessionID string) error
+	// StartMicOnly begins a mic-only capture (no system audio), which on macOS
+	// avoids the Screen Recording permission. Used for quick voice notes.
+	StartMicOnly(ctx context.Context, sessionID string) error
 	// Stop ends capture and returns the recorded WAV file(s).
 	Stop() (Recording, error)
 	// Cancel aborts capture and discards any recorded audio.
@@ -40,8 +43,9 @@ type Capturer interface {
 // nothing and reports that capture is unavailable on Stop.
 type Stub struct{}
 
-func (Stub) Start(context.Context, string) error { return nil }
-func (Stub) Stop() (Recording, error)            { return Recording{}, ErrNotImplemented }
-func (Stub) Cancel() error                       { return nil }
-func (Stub) Pause() error                        { return nil }
-func (Stub) Resume() error                       { return nil }
+func (Stub) Start(context.Context, string) error        { return nil }
+func (Stub) StartMicOnly(context.Context, string) error { return nil }
+func (Stub) Stop() (Recording, error)                   { return Recording{}, ErrNotImplemented }
+func (Stub) Cancel() error                              { return nil }
+func (Stub) Pause() error                               { return nil }
+func (Stub) Resume() error                              { return nil }

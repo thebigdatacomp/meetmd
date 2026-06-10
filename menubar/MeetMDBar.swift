@@ -20,6 +20,9 @@ private enum State: String {
     case idle, recording, paused, processing
 }
 
+// Session kind reported by the bridge on /status (matches Go's session.Kind).
+private let kindNote = "note"
+
 // UI language for menus, prompts and labels. Defaults to the OS preference and
 // is overridden by the bridge's resolved `uiLanguage` (which honors the
 // ui_language config). English is the fallback for anything non-Portuguese.
@@ -169,9 +172,11 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private var online = false
     private var state: State = .idle
+    private var kind = "" // "meeting" | "note" while a session is active
     private var sessionID: String?
     private var title = ""
     private var outputRoot = ""
+    private var filesRoot = "" // recordings folder (holds meetings/ and notes/)
     private var detectedCode: String?
     private var detectedTitle = ""
 
@@ -215,7 +220,9 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func apply(_ obj: [String: Any]) {
         state = State(rawValue: obj["state"] as? String ?? "idle") ?? .idle
+        kind = obj["kind"] as? String ?? ""
         outputRoot = obj["outputRoot"] as? String ?? ""
+        filesRoot = obj["filesRoot"] as? String ?? ""
 
         // The bridge resolves ui_language (incl. "auto") to "pt"/"en"; honor it
         // so a config override drives the menu UI too, not just the .md output.
@@ -288,6 +295,18 @@ final class AppController: NSObject, NSApplicationDelegate {
         startSession(title: title, project: input.project, platform: "manual")
     }
 
+    // startNote begins a quick voice note: mic-only, no prompt, lands in notes/.
+    @objc private func startNote() {
+        request("POST", "/notes/start") { [weak self] data, ok in
+            guard let self = self else { return }
+            if !ok {
+                let message = self.errorMessage(from: data) ?? tr("Falha ao iniciar a nota.", "Failed to start the note.")
+                DispatchQueue.main.async { self.showError(message) }
+            }
+            self.poll()
+        }
+    }
+
     // startSession posts a start request and surfaces any error. failCode, when
     // set, marks a detected meeting as dismissed so a failure doesn't re-prompt.
     private func startSession(title: String, project: String, platform: String, failCode: String? = nil) {
@@ -329,8 +348,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openFolder() {
-        guard !outputRoot.isEmpty else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: outputRoot))
+        // Open the folder that holds both meetings/ and notes/ (falls back to the
+        // meetings root if the bridge didn't report a common folder).
+        let path = filesRoot.isEmpty ? outputRoot : filesRoot
+        guard !path.isEmpty else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
     @objc private func openSettings() {
@@ -351,6 +373,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         A transcrição é feita localmente (whisper.cpp) — o áudio não sai da sua \
         máquina. Reuniões do Google Meet no Safari são detectadas \
         automaticamente; ou grave manualmente pelo menu.
+
+        Use também "Nova nota de voz" para ditar uma anotação rápida (só \
+        microfone, sem permissão de tela) direto para a pasta de notas.
         """, """
         Captures your meetings and generates the transcript in Markdown, \
         organized by project and ready for Claude to process.
@@ -358,6 +383,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         Transcription runs locally (whisper.cpp) — the audio never leaves your \
         machine. Google Meet meetings in Safari are detected automatically; or \
         record manually from the menu.
+
+        Use "New voice note" to dictate a quick note (mic only, no screen \
+        permission) straight to your notes folder.
         """)
         alert.icon = ClaudeIcon.image(for: .recording, online: true, height: 76) // mascote gravando
         alert.addButton(withTitle: "OK")
@@ -411,6 +439,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             switch state {
             case .idle:
                 menu.addItem(item(tr("Iniciar gravação", "Start recording"), #selector(startManual), "r", "record.circle"))
+                menu.addItem(item(tr("Nova nota de voz", "New voice note"), #selector(startNote), "n", "mic.circle"))
+            case .recording where kind == kindNote:
+                menu.addItem(item(tr("Parar e salvar nota", "Stop & save note"), #selector(stop), "s", "stop.circle"))
             case .recording:
                 menu.addItem(item(tr("Pausar", "Pause"), #selector(pause), "p", "pause.circle"))
                 menu.addItem(item(tr("Parar e salvar", "Stop & save"), #selector(stop), "s", "stop.circle"))
@@ -432,6 +463,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func headerText() -> String {
         if !online { return tr("Bridge offline", "Bridge offline") }
         switch state {
+        case .recording where kind == kindNote: return tr("Gravando nota…", "Recording note…")
         case .recording: return tr("Gravando: ", "Recording: ") + displayTitle()
         case .paused: return tr("Pausado: ", "Paused: ") + displayTitle()
         case .processing: return tr("Processando…", "Processing…")
@@ -543,7 +575,7 @@ final class SettingsWindowController: NSWindowController {
         languagePopup.addItems(withTitles: languages.map { $0.0 })
         uiLanguagePopup.addItems(withTitles: uiLanguages.map { $0.0 })
         autoDetectPopup.addItems(withTitles: autoModes.map { $0.0 })
-        outputField.placeholderString = "/Users/…/meetings"
+        outputField.placeholderString = "/Users/…/recordings"
         projectField.placeholderString = tr("ex.: bora (opcional)", "e.g. bora (optional)")
 
         let choose = NSButton(title: tr("Escolher…", "Choose…"), target: self, action: #selector(chooseFolder))
@@ -553,7 +585,7 @@ final class SettingsWindowController: NSWindowController {
         outputRow.spacing = 6
 
         let form = NSStackView(views: [
-            labeled(tr("Pasta de saída", "Output folder"), outputRow),
+            labeled(tr("Pasta de gravações", "Recordings folder"), outputRow),
             labeled(tr("Idioma da interface", "Interface language"), uiLanguagePopup),
             labeled(tr("Idioma da transcrição", "Transcription language"), languagePopup),
             labeled(tr("Projeto padrão", "Default project"), projectField),
@@ -615,7 +647,7 @@ final class SettingsWindowController: NSWindowController {
                 self?.hint.stringValue = tr("Bridge offline", "Bridge offline")
                 return
             }
-            self.outputField.stringValue = o["outputRoot"] as? String ?? ""
+            self.outputField.stringValue = o["recordingsRoot"] as? String ?? ""
             self.projectField.stringValue = o["defaultProject"] as? String ?? ""
             self.select(self.languagePopup, self.languages, value: o["language"] as? String ?? "auto")
             self.select(self.uiLanguagePopup, self.uiLanguages, value: o["uiLanguage"] as? String ?? "auto")
@@ -638,7 +670,7 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func saveSettings() {
         let body: [String: Any] = [
-            "outputRoot": outputField.stringValue,
+            "recordingsRoot": outputField.stringValue,
             "language": value(languagePopup, languages),
             "uiLanguage": value(uiLanguagePopup, uiLanguages),
             "defaultProject": projectField.stringValue,

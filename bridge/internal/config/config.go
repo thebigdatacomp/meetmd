@@ -24,6 +24,11 @@ const (
 	configDirName  = ".meetmd"
 	configFileName = "config.yaml"
 
+	// Recordings live under <home>/.meetmd/recordings/{meetings,notes}.
+	recordingsDir = "recordings"
+	meetingsDir   = "meetings"
+	notesDir      = "notes"
+
 	// Supported UI languages. Anything else (incl. "auto") resolves via the OS,
 	// falling back to English.
 	LangPT = "pt"
@@ -32,14 +37,26 @@ const (
 
 // Config is the bridge's runtime configuration.
 type Config struct {
-	OutputRoot string     `yaml:"output_root"`
-	Port       int        `yaml:"port"`
-	Language   string     `yaml:"language"`    // whisper transcription language (auto|pt|es|en|...)
-	UILanguage string     `yaml:"ui_language"` // UI + .md output language (auto|pt|en)
-	Whisper    Whisper    `yaml:"whisper"`
-	Audio      Audio      `yaml:"audio"`
-	AutoDetect AutoDetect `yaml:"auto_detect"`
+	// RecordingsRoot is the single base folder for all output; meetings and notes
+	// live in fixed subfolders under it (see MeetingsRoot/NotesRoot), so they can
+	// never diverge and the UI can open one folder showing both.
+	RecordingsRoot string `yaml:"recordings_root"`
+	// LegacyOutputRoot migrates pre-recordings configs (output_root pointed at the
+	// meetings dir): RecordingsRoot becomes its parent. Never re-persisted.
+	LegacyOutputRoot string     `yaml:"output_root,omitempty"`
+	Port             int        `yaml:"port"`
+	Language         string     `yaml:"language"`    // whisper transcription language (auto|pt|es|en|...)
+	UILanguage       string     `yaml:"ui_language"` // UI + .md output language (auto|pt|en)
+	Whisper          Whisper    `yaml:"whisper"`
+	Audio            Audio      `yaml:"audio"`
+	AutoDetect       AutoDetect `yaml:"auto_detect"`
 }
+
+// MeetingsRoot is where meeting recordings are written (recordings/meetings).
+func (c Config) MeetingsRoot() string { return filepath.Join(c.RecordingsRoot, meetingsDir) }
+
+// NotesRoot is where quick voice notes are written (recordings/notes).
+func (c Config) NotesRoot() string { return filepath.Join(c.RecordingsRoot, notesDir) }
 
 // AutoDetect configures browser meeting auto-detection (macOS/Safari).
 type AutoDetect struct {
@@ -67,13 +84,13 @@ type Audio struct {
 // Default returns a Config with all defaults applied (no config file).
 func Default() Config {
 	return Config{
-		OutputRoot: defaultOutputRoot(),
-		Port:       defaultPort,
-		Language:   defaultLanguage,
-		UILanguage: defaultUILang,
-		Whisper:    Whisper{Engine: defaultEngine, ModelPath: defaultModelPath(), VADModel: defaultVADModelPath()},
-		Audio:      Audio{CaptureMic: true, DeleteWavOnFinish: true},
-		AutoDetect: AutoDetect{Enabled: true, Mode: defaultMode, IntervalSeconds: defaultInterval},
+		RecordingsRoot: defaultRecordingsRoot(),
+		Port:           defaultPort,
+		Language:       defaultLanguage,
+		UILanguage:     defaultUILang,
+		Whisper:        Whisper{Engine: defaultEngine, ModelPath: defaultModelPath(), VADModel: defaultVADModelPath()},
+		Audio:          Audio{CaptureMic: true, DeleteWavOnFinish: true},
+		AutoDetect:     AutoDetect{Enabled: true, Mode: defaultMode, IntervalSeconds: defaultInterval},
 	}
 }
 
@@ -99,9 +116,14 @@ func Load() (Config, error) {
 // applyDefaults backfills any field left empty by the config file.
 func (c *Config) applyDefaults() {
 	d := Default()
-	if c.OutputRoot == "" {
-		c.OutputRoot = d.OutputRoot
+	if c.RecordingsRoot == "" {
+		if c.LegacyOutputRoot != "" {
+			c.RecordingsRoot = filepath.Dir(c.LegacyOutputRoot) // migrate pre-recordings layout
+		} else {
+			c.RecordingsRoot = d.RecordingsRoot
+		}
 	}
+	c.LegacyOutputRoot = "" // never re-persist the deprecated key
 	if c.Port == 0 {
 		c.Port = d.Port
 	}
@@ -163,8 +185,8 @@ func DefaultPath() string {
 	return filepath.Join(homeDir(), configDirName, configFileName)
 }
 
-func defaultOutputRoot() string {
-	return filepath.Join(homeDir(), configDirName, "meetings")
+func defaultRecordingsRoot() string {
+	return filepath.Join(homeDir(), configDirName, recordingsDir)
 }
 
 func defaultModelPath() string {

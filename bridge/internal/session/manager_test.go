@@ -13,7 +13,7 @@ import (
 )
 
 func newTestManager(root string) *Manager {
-	return New(config.NewStore(config.Config{OutputRoot: root}), audio.Stub{},
+	return New(config.NewStore(config.Config{RecordingsRoot: root}), audio.Stub{},
 		func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
 }
 
@@ -30,8 +30,8 @@ func TestStopRoutesOutputByProject(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	// "Bora" is sanitized to "bora" and becomes a subfolder of the root.
-	wantDir := filepath.Join(root, "bora")
+	// "Bora" is sanitized to "bora" and becomes a subfolder of meetings/.
+	wantDir := filepath.Join(root, "meetings", "bora")
 	if filepath.Dir(res.SessionDir) != wantDir {
 		t.Errorf("session dir = %s, want under %s", res.SessionDir, wantDir)
 	}
@@ -59,8 +59,43 @@ func TestStopNoProjectUsesRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
-	if filepath.Dir(res.SessionDir) != root {
-		t.Errorf("session dir parent = %s, want %s", filepath.Dir(res.SessionDir), root)
+	wantParent := filepath.Join(root, "meetings")
+	if filepath.Dir(res.SessionDir) != wantParent {
+		t.Errorf("session dir parent = %s, want %s", filepath.Dir(res.SessionDir), wantParent)
+	}
+}
+
+func TestStartNoteWritesToNotes(t *testing.T) {
+	root := t.TempDir()
+	notes := filepath.Join(root, "notes")
+	mgr := New(config.NewStore(config.Config{RecordingsRoot: root}),
+		audio.Stub{}, func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
+	ctx := context.Background()
+
+	note, err := mgr.StartNote(ctx)
+	if err != nil {
+		t.Fatalf("StartNote: %v", err)
+	}
+	if mgr.Status().Kind != KindNote {
+		t.Errorf("status kind = %q, want note", mgr.Status().Kind)
+	}
+	res, err := mgr.Stop(ctx, note.ID)
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// The note lands in the notes folder (not meetings/), as a single .md file.
+	if res.SessionDir != notes {
+		t.Errorf("note dir = %s, want %s", res.SessionDir, notes)
+	}
+	if len(res.Files) != 1 || !strings.HasSuffix(res.Files[0], "-note.md") {
+		t.Fatalf("unexpected note files: %v", res.Files)
+	}
+	body, err := os.ReadFile(filepath.Join(notes, res.Files[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "kind: note") {
+		t.Errorf("note missing kind frontmatter:\n%s", body)
 	}
 }
 

@@ -77,8 +77,8 @@ func runServe() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	if err := os.MkdirAll(cfg.OutputRoot, 0o755); err != nil {
-		log.Fatalf("output root %q: %v", cfg.OutputRoot, err)
+	if err := os.MkdirAll(cfg.RecordingsRoot, 0o755); err != nil {
+		log.Fatalf("recordings root %q: %v", cfg.RecordingsRoot, err)
 	}
 
 	// Hot-reloadable config: the store is read live; the watcher reloads it when
@@ -122,7 +122,7 @@ func runServe() {
 	srv := server.New(mgr, store)
 
 	log.Printf("MeetMD bridge listening on 127.0.0.1:%d", cfg.Port)
-	log.Printf("output root: %s", cfg.OutputRoot)
+	log.Printf("recordings root: %s", cfg.RecordingsRoot)
 	if err := srv.ListenAndServe(cfg.Port); err != nil {
 		log.Fatalf("server: %v", err)
 	}

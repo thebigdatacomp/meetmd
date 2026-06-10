@@ -34,6 +34,7 @@ type macCapturer struct {
 	cmd     *exec.Cmd
 	wavPath string
 	micPath string
+	micOnly bool // mic-only capture (voice note): wavPath holds the mic recording
 }
 
 func newMacCapturer(store *config.Store) *macCapturer {
@@ -41,6 +42,16 @@ func newMacCapturer(store *config.Store) *macCapturer {
 }
 
 func (c *macCapturer) Start(_ context.Context, sessionID string) error {
+	return c.launch(sessionID, false)
+}
+
+// StartMicOnly records only the mic (voice notes): the helper skips
+// ScreenCaptureKit, so no Screen Recording permission is needed.
+func (c *macCapturer) StartMicOnly(_ context.Context, sessionID string) error {
+	return c.launch(sessionID, true)
+}
+
+func (c *macCapturer) launch(sessionID string, micOnly bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.cmd != nil {
@@ -58,7 +69,11 @@ func (c *macCapturer) Start(_ context.Context, sessionID string) error {
 	args := []string{wav} // no duration arg → record until signalled
 
 	mic := ""
-	if audioCfg.CaptureMic {
+	switch {
+	case micOnly:
+		// The single WAV is the mic recording; no system audio, no --mic channel.
+		args = append(args, "--mic-only")
+	case audioCfg.CaptureMic:
 		mic = filepath.Join(c.workDir, sessionID+".mic.wav")
 		args = append(args, "--mic", mic)
 	}
@@ -68,7 +83,7 @@ func (c *macCapturer) Start(_ context.Context, sessionID string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start audio helper: %w", err)
 	}
-	c.cmd, c.wavPath, c.micPath = cmd, wav, mic
+	c.cmd, c.wavPath, c.micPath, c.micOnly = cmd, wav, mic, micOnly
 	return nil
 }
 
@@ -78,15 +93,22 @@ func (c *macCapturer) Stop() (Recording, error) {
 	if c.cmd == nil {
 		return Recording{}, errors.New("no capture running")
 	}
-	cmd, wav, mic := c.cmd, c.wavPath, c.micPath
-	c.cmd, c.wavPath, c.micPath = nil, "", ""
+	cmd, wav, mic, micOnly := c.cmd, c.wavPath, c.micPath, c.micOnly
+	c.cmd, c.wavPath, c.micPath, c.micOnly = nil, "", "", false
 
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	// A mic-only note makes a mic failure (e.g. denied permission) fatal, so the
+	// helper may have already exited by the time we stop. That is not an error —
+	// fall through to the "no usable audio" handling below for a graceful empty.
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return Recording{}, fmt.Errorf("signal audio helper: %w", err)
 	}
 	waitErr := cmd.Wait() // exit 2 = ran but captured nothing
 
+	// In mic-only mode the single WAV is the mic recording, not system audio.
 	rec := Recording{SystemWav: usableWav(wav), MicWav: usableWav(mic)}
+	if micOnly {
+		rec = Recording{MicWav: usableWav(wav)}
+	}
 	// Treat "no usable audio" as no audio rather than a hard failure, so the
 	// session still completes with an empty transcript.
 	if rec.SystemWav == "" && rec.MicWav == "" {
@@ -128,7 +150,7 @@ func (c *macCapturer) Cancel() error {
 		return nil
 	}
 	cmd, wav, mic := c.cmd, c.wavPath, c.micPath
-	c.cmd, c.wavPath, c.micPath = nil, "", ""
+	c.cmd, c.wavPath, c.micPath, c.micOnly = nil, "", "", false
 	_ = cmd.Process.Signal(syscall.SIGKILL)
 	_ = cmd.Wait()
 	for _, p := range []string{wav, mic} {

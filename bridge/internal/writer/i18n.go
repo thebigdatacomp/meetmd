@@ -35,6 +35,8 @@ type texts struct {
 	titleFallback string
 	speakerYou    string
 	speakerOthers string
+
+	noteTitle string // quick voice note heading/title
 }
 
 var ptTexts = texts{
@@ -67,6 +69,8 @@ var ptTexts = texts{
 	titleFallback: "Reunião sem título",
 	speakerYou:    "Você",
 	speakerOthers: "Participantes",
+
+	noteTitle: "Nota de voz",
 }
 
 var enTexts = texts{
@@ -99,6 +103,8 @@ var enTexts = texts{
 	titleFallback: "Untitled meeting",
 	speakerYou:    "You",
 	speakerOthers: "Participants",
+
+	noteTitle: "Voice note",
 }
 
 // textsFor returns the string set for a resolved language ("pt"/"en"),
