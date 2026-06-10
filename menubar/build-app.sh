@@ -76,6 +76,28 @@ for b in MeetMD meetmd-bridge whisper-cli system-audio-recorder; do
 	[ -x "$MACOS/$b" ] || { echo "ERRO: binário $b não foi gerado"; exit 1; }
 done
 
+echo "==> ícone do app (.icns, renderizado do mascote)"
+# Rendering runs the GUI binary, which needs a window-server session. Keep it
+# non-fatal: a missing icon is cosmetic (Finder falls back to a generic one) and
+# must not abort the whole build (e.g. headless/CI). Cleans up its temp dir.
+generate_app_icon() {
+	local tmp iconset s
+	tmp="$(mktemp -d)"
+	iconset="$tmp/MeetMD.iconset"
+	mkdir -p "$iconset"
+	for s in 16x16:16 16x16@2x:32 32x32:32 32x32@2x:64 128x128:128 \
+		128x128@2x:256 256x256:256 256x256@2x:512 512x512:512 512x512@2x:1024; do
+		"$MACOS/MeetMD" --app-icon "$iconset/icon_${s%%:*}.png" "${s##*:}" || { rm -rf "$tmp"; return 1; }
+	done
+	iconutil -c icns "$iconset" -o "$RES/AppIcon.icns" || { rm -rf "$tmp"; return 1; }
+	rm -rf "$tmp"
+}
+if generate_app_icon; then
+	echo "    AppIcon.icns gerado"
+else
+	echo "    AVISO: ícone do app não gerado (sem sessão gráfica?) — bundle usa ícone genérico"
+fi
+
 echo "==> Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -86,6 +108,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleDisplayName</key>     <string>MeetMD</string>
 	<key>CFBundleIdentifier</key>      <string>${BUNDLE_ID}</string>
 	<key>CFBundleExecutable</key>      <string>MeetMD</string>
+	<key>CFBundleIconFile</key>        <string>AppIcon</string>
 	<key>CFBundleVersion</key>         <string>${VERSION}</string>
 	<key>CFBundleShortVersionString</key><string>${VERSION}</string>
 	<key>CFBundlePackageType</key>     <string>APPL</string>

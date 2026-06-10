@@ -9,6 +9,7 @@
 // Run:   ./meetmd-bar   (lives in the menu bar; no Dock icon)
 
 import Cocoa
+import ServiceManagement
 
 private enum Bridge {
     static let base = "http://127.0.0.1:8765"
@@ -57,10 +58,14 @@ private enum ClaudeIcon {
     private static let gray = NSColor(white: 0.55, alpha: 1)
     private static let dark = NSColor(white: 0.12, alpha: 1)
 
-    static func image(for state: State, online: Bool, height: CGFloat = 20) -> NSImage {
+    static func image(for state: State, online: Bool, asleep: Bool = false, height: CGFloat = 20) -> NSImage {
         let s = height / 20 // scale (base canvas is 22×20)
         let img = NSImage(size: NSSize(width: 22 * s, height: height), flipped: false) { _ in
             let area = NSRect(x: 1 * s, y: 1 * s, width: 20 * s, height: 16.25 * s) // square cells; room for the bubble
+            if asleep {
+                sleeping(in: area)
+                return true
+            }
             let body = online ? orange : gray
             let showEyes = !(online && state == .paused) // paused: bars only, no eyes
             creature(in: area, body: body, eyes: showEyes)
@@ -72,6 +77,27 @@ private enum ClaudeIcon {
                 case .idle: break
                 }
             }
+            return true
+        }
+        img.isTemplate = false
+        return img
+    }
+
+    // appIcon renders the colored brand icon for the .app bundle: the headphone
+    // mascot centered on a warm dark rounded square.
+    static func appIcon(px: CGFloat) -> NSImage {
+        let img = NSImage(size: NSSize(width: px, height: px), flipped: false) { _ in
+            let pad = px * 0.05
+            let bgRect = NSRect(x: pad, y: pad, width: px - 2 * pad, height: px - 2 * pad)
+            let bg = NSBezierPath(roundedRect: bgRect, xRadius: px * 0.22, yRadius: px * 0.22)
+            NSColor(red: 0.16, green: 0.14, blue: 0.13, alpha: 1).setFill()
+            bg.fill()
+
+            let w = px * 0.60
+            let c = w / CGFloat(cols)
+            let area = NSRect(x: (px - w) / 2, y: (px - 13 * c) / 2, width: w, height: 13 * c)
+            creature(in: area, body: orange, eyes: true)
+            headphones(in: area)
             return true
         }
         img.isTemplate = false
@@ -103,6 +129,32 @@ private enum ClaudeIcon {
         if eyes {
             dark.setFill()
             fillCells(in: r) { $0 == "e" }
+        }
+    }
+
+    // Snooze: dimmed body, closed eyes (dashes instead of `> <`), and "zZz"
+    // drifting up to the right.
+    private static func sleeping(in r: NSRect) {
+        gray.setFill()
+        fillCells(in: r) { $0 == "X" }
+        dark.setFill()
+        let lids = NSBezierPath()
+        for x in [3, 4] { lids.appendRect(px(x, 7, r)) }   // left closed eye
+        for x in [11, 12] { lids.appendRect(px(x, 7, r)) } // right closed eye
+        lids.fill()
+
+        // "z z z" drifting up to the right over the head. White so it reads against
+        // the gray head on both light and dark menu bars (like the recording fone).
+        let c = cell(r)
+        let zs: [(x: CGFloat, y: CGFloat, size: CGFloat)] = [
+            (8.6, 6.0, 2.8), (10.5, 4.1, 3.6), (12.6, 1.9, 4.6),
+        ]
+        for z in zs {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: c * z.size),
+                .foregroundColor: NSColor.white,
+            ]
+            ("z" as NSString).draw(at: NSPoint(x: r.minX + c * z.x, y: r.minY + r.height - c * z.y), withAttributes: attrs)
         }
     }
 
@@ -172,6 +224,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private var online = false
     private var state: State = .idle
+    private var asleep = false // snooze: bridge silenced; icon shows zZz
     private var kind = "" // "meeting" | "note" while a session is active
     private var sessionID: String?
     private var title = ""
@@ -220,6 +273,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func apply(_ obj: [String: Any]) {
         state = State(rawValue: obj["state"] as? String ?? "idle") ?? .idle
+        asleep = obj["asleep"] as? Bool ?? false
         kind = obj["kind"] as? String ?? ""
         outputRoot = obj["outputRoot"] as? String ?? ""
         filesRoot = obj["filesRoot"] as? String ?? ""
@@ -248,17 +302,21 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Snooze only manifests while idle: an active recording always wins the UI
+    // (so its Stop action and "recording" state stay visible and reachable).
+    private var snoozing: Bool { asleep && state == .idle }
+
     private func updateIcon() {
         let button = statusItem.button
         button?.title = ""
-        button?.image = ClaudeIcon.image(for: state, online: online)
+        button?.image = ClaudeIcon.image(for: state, online: online, asleep: snoozing)
         button?.imagePosition = .imageOnly
     }
 
     // --- prompt on detection ------------------------------------------------
 
     private func maybePrompt() {
-        guard online, state == .idle, !promptShowing,
+        guard online, !asleep, state == .idle, !promptShowing,
               let code = detectedCode, code != dismissedCode else { return }
 
         promptShowing = true
@@ -328,10 +386,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         return obj["message"] as? String
     }
 
-    private func showError(_ message: String) {
+    private func showError(_ message: String) { showAlert(message, style: .warning) }
+    private func showInfo(_ message: String) { showAlert(message, style: .informational) }
+
+    private func showAlert(_ message: String, style: NSAlert.Style) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.alertStyle = .warning
+        alert.alertStyle = style
         alert.messageText = "MeetMD"
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
@@ -428,6 +489,54 @@ final class AppController: NSObject, NSApplicationDelegate {
         return field
     }
 
+    // --- snooze & login item ------------------------------------------------
+
+    @objc private func toggleSleep() {
+        asleep.toggle() // optimistic: flip now, the next poll() reconciles
+        updateIcon()
+        rebuildMenu()
+        request("POST", asleep ? "/sleep" : "/wake") { [weak self] _, _ in self?.poll() }
+    }
+
+    // loginItemRegistered: enabled OR requiresApproval both mean "the user asked
+    // for it" — requiresApproval just needs a one-time approval in System Settings.
+    @available(macOS 13.0, *)
+    private var loginItemRegistered: Bool {
+        let s = SMAppService.mainApp.status
+        return s == .enabled || s == .requiresApproval
+    }
+
+    // loginItemMenuItem reflects and toggles whether MeetMD launches at login,
+    // using the system Login Items registration (macOS 13+ SMAppService).
+    private func loginItemMenuItem() -> NSMenuItem {
+        let mi = item(tr("Abrir no login", "Open at login"), #selector(toggleLoginItem), "", "power.dotted")
+        if #available(macOS 13.0, *) {
+            mi.state = loginItemRegistered ? .on : .off
+        } else {
+            mi.isEnabled = false
+        }
+        return mi
+    }
+
+    @objc private func toggleLoginItem() {
+        guard #available(macOS 13.0, *) else { return }
+        do {
+            if loginItemRegistered {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+                if SMAppService.mainApp.status == .requiresApproval {
+                    showInfo(tr("Aprove o MeetMD em Ajustes do Sistema ▸ Geral ▸ Itens de Início para ele abrir no login.",
+                                "Approve MeetMD in System Settings ▸ General ▸ Login Items so it opens at login."))
+                }
+            }
+        } catch {
+            showError(tr("Não foi possível alterar o início no login: \(error.localizedDescription). O app precisa estar em /Aplicativos.",
+                         "Couldn't change open-at-login: \(error.localizedDescription). The app must be in /Applications."))
+        }
+        rebuildMenu()
+    }
+
     // --- menu ---------------------------------------------------------------
 
     private func rebuildMenu() {
@@ -435,7 +544,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(disabled(headerText()))
         menu.addItem(.separator())
 
-        if online {
+        if online, snoozing {
+            // Snoozing (only while idle): do nothing but offer to wake.
+            menu.addItem(item(tr("Acordar", "Wake up"), #selector(toggleSleep), "", "sun.max"))
+        } else if online {
             switch state {
             case .idle:
                 menu.addItem(item(tr("Iniciar gravação", "Start recording"), #selector(startManual), "r", "record.circle"))
@@ -453,8 +565,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             menu.addItem(item(tr("Abrir pasta dos arquivos", "Open files folder"), #selector(openFolder), "f", "folder"))
             menu.addItem(item(tr("Configurações…", "Settings…"), #selector(openSettings), ",", "gearshape"))
+            if state == .idle { // snooze only makes sense when there's nothing to record
+                menu.addItem(item(tr("Dormir", "Snooze"), #selector(toggleSleep), "", "moon"))
+            }
         }
         menu.addItem(.separator())
+        menu.addItem(loginItemMenuItem())
         menu.addItem(item(tr("Sobre o MeetMD", "About MeetMD"), #selector(openAbout), "", "info.circle"))
         menu.addItem(item(tr("Sair", "Quit"), #selector(quit), "q", "power"))
         statusItem.menu = menu
@@ -462,6 +578,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func headerText() -> String {
         if !online { return tr("Bridge offline", "Bridge offline") }
+        if snoozing { return tr("Dormindo (soneca)", "Snoozing") }
         switch state {
         case .recording where kind == kindNote: return tr("Gravando nota…", "Recording note…")
         case .recording: return tr("Gravando: ", "Recording: ") + displayTitle()
@@ -715,6 +832,32 @@ final class SettingsWindowController: NSWindowController {
             DispatchQueue.main.async { done(err == nil && ok ? obj : nil) }
         }.resume()
     }
+}
+
+// Hidden dev/build helper: `MeetMD --render <state> <out.png> [px]` renders one
+// icon state to a PNG. Used by build-app.sh to generate the .app icon and to
+// preview states. States: idle | recording | paused | processing | offline | asleep.
+func writePNG(_ img: NSImage, _ path: String) {
+    if let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+       let png = rep.representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: path))
+    }
+}
+// Bring up the AppKit graphics stack before any off-screen text/icon rendering.
+if CommandLine.arguments.count >= 2, CommandLine.arguments[1].hasPrefix("--") {
+    _ = NSApplication.shared
+}
+if CommandLine.arguments.count >= 4, CommandLine.arguments[1] == "--render" {
+    let name = CommandLine.arguments[2]
+    let px = CommandLine.arguments.count >= 5 ? CGFloat(Double(CommandLine.arguments[4]) ?? 20) : 20
+    let img = ClaudeIcon.image(for: State(rawValue: name) ?? .idle, online: name != "offline", asleep: name == "asleep", height: px)
+    writePNG(img, CommandLine.arguments[3])
+    exit(0)
+}
+if CommandLine.arguments.count >= 4, CommandLine.arguments[1] == "--app-icon" {
+    let px = CGFloat(Double(CommandLine.arguments[3]) ?? 1024)
+    writePNG(ClaudeIcon.appIcon(px: px), CommandLine.arguments[2])
+    exit(0)
 }
 
 let app = NSApplication.shared

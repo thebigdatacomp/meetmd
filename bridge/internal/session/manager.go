@@ -72,6 +72,7 @@ type StartRequest struct {
 type Status struct {
 	State      State            `json:"state"`
 	Kind       Kind             `json:"kind,omitempty"` // "meeting" | "note" while active
+	Asleep     bool             `json:"asleep"`         // snooze on: detector silenced
 	Meeting    *model.Meeting   `json:"meeting,omitempty"`
 	Detected   *DetectedMeeting `json:"detected,omitempty"`
 	OutputRoot string           `json:"outputRoot"`
@@ -98,6 +99,7 @@ type Manager struct {
 	paused     bool
 	processing bool // stopped, running transcription/write (lock not held meanwhile)
 	detected   *DetectedMeeting
+	asleep     bool // snooze: the detector does nothing (no prompts, no auto-record)
 }
 
 // New builds a Manager from its dependencies. The config Store is read live so
@@ -242,6 +244,7 @@ func (m *Manager) Status() Status {
 	st := Status{
 		State:      StateIdle,
 		Kind:       m.kind,
+		Asleep:     m.asleep,
 		OutputRoot: cfg.MeetingsRoot(),
 		FilesRoot:  cfg.RecordingsRoot,
 		UILanguage: cfg.ResolvedUILang(),
@@ -308,6 +311,30 @@ func (m *Manager) ClearDetected() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.detected = nil
+}
+
+// Sleep puts the manager into snooze: the detector stops prompting/auto-recording
+// (see detect.loop). Wake reverses it. Asleep reports the current state. Snooze
+// does not touch an active recording — it only silences auto-detection.
+func (m *Manager) Sleep() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.asleep = true
+	m.detected = nil
+}
+
+// Wake clears snooze.
+func (m *Manager) Wake() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.asleep = false
+}
+
+// Asleep reports whether snooze is on.
+func (m *Manager) Asleep() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.asleep
 }
 
 // checkActive validates id against the active session. Caller holds m.mu.
