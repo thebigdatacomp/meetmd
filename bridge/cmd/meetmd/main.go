@@ -96,13 +96,14 @@ func runServe() {
 	// Transcriber is built per recording from the live config, so model/language/
 	// VAD changes take effect without a restart. Falls back to an empty
 	// transcript when the CLI or model is missing.
-	newTranscriber := func(c config.Config) transcribe.Transcriber {
+	newTranscriber := func(c config.Config, voice bool) transcribe.Transcriber {
 		t, _ := transcribe.New(transcribe.Options{
 			Engine:    c.Whisper.Engine,
 			BinPath:   c.Whisper.BinPath,
 			ModelPath: c.Whisper.ModelPath,
 			Language:  c.Language,
 			VADModel:  c.Whisper.VADModel,
+			Voice:     voice,
 		})
 		return t
 	}

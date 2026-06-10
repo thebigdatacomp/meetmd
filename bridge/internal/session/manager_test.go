@@ -14,7 +14,7 @@ import (
 
 func newTestManager(root string) *Manager {
 	return New(config.NewStore(config.Config{RecordingsRoot: root}), audio.Stub{},
-		func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
+		func(config.Config, bool) transcribe.Transcriber { return transcribe.Stub{} })
 }
 
 func TestStopRoutesOutputByProject(t *testing.T) {
@@ -69,7 +69,7 @@ func TestStartNoteWritesToNotes(t *testing.T) {
 	root := t.TempDir()
 	notes := filepath.Join(root, "notes")
 	mgr := New(config.NewStore(config.Config{RecordingsRoot: root}),
-		audio.Stub{}, func(config.Config) transcribe.Transcriber { return transcribe.Stub{} })
+		audio.Stub{}, func(config.Config, bool) transcribe.Transcriber { return transcribe.Stub{} })
 	ctx := context.Background()
 
 	note, err := mgr.StartNote(ctx)
