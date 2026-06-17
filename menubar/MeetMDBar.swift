@@ -228,6 +228,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var kind = "" // "meeting" | "note" while a session is active
     private var sessionID: String?
     private var title = ""
+    private var meetingProject = "" // shown when an auto-detected meeting has no title
     private var outputRoot = ""
     private var filesRoot = "" // recordings folder (holds meetings/ and notes/)
     private var detectedCode: String?
@@ -239,6 +240,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var triedLaunch = false
     private var settingsController: SettingsWindowController?
 
+    private var onboardingController: OnboardingWindowController?
+    private static let onboardedKey = "didOnboard"
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         statusItem.button?.image = ClaudeIcon.image(for: .idle, online: false)
@@ -248,6 +252,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             self?.poll()
         }
         poll()
+        // First run: guide the user through the TCC permissions before they record.
+        if !UserDefaults.standard.bool(forKey: Self.onboardedKey) {
+            UserDefaults.standard.set(true, forKey: Self.onboardedKey)
+            openOnboarding()
+        }
+    }
+
+    @objc private func openOnboarding() {
+        if onboardingController == nil { onboardingController = OnboardingWindowController() }
+        onboardingController?.show()
     }
 
     // --- polling ------------------------------------------------------------
@@ -287,9 +301,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         if let meeting = obj["meeting"] as? [String: Any] {
             sessionID = meeting["ID"] as? String
             title = meeting["Title"] as? String ?? ""
+            meetingProject = meeting["Project"] as? String ?? ""
         } else {
             sessionID = nil
-            title = ""
+            if state != .processing { title = ""; meetingProject = "" } // keep name while transcribing
         }
 
         if let detected = obj["detected"] as? [String: Any] {
@@ -308,9 +323,26 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func updateIcon() {
         let button = statusItem.button
-        button?.title = ""
         button?.image = ClaudeIcon.image(for: state, online: online, asleep: snoozing)
-        button?.imagePosition = .imageOnly
+        // While recording/transcribing, show the meeting name next to the icon —
+        // but only when there's a real name, so there's no dangling separator.
+        let name = recordingName()
+        if online, state == .recording || state == .processing, !name.isEmpty {
+            button?.title = " – " + name
+            button?.imagePosition = .imageLeading
+        } else {
+            button?.title = ""
+            button?.imagePosition = .imageOnly
+        }
+    }
+
+    // recordingName is the label shown in the menu bar while active: the note
+    // label, else the title, else the project — empty when none, never "untitled".
+    private func recordingName() -> String {
+        let raw = (state == .recording && kind == kindNote)
+            ? tr("Nota de voz", "Voice note")
+            : (title.isEmpty ? meetingProject : title)
+        return raw.count > 30 ? String(raw.prefix(29)) + "…" : raw
     }
 
     // --- prompt on detection ------------------------------------------------
@@ -571,6 +603,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         menu.addItem(.separator())
         menu.addItem(loginItemMenuItem())
+        menu.addItem(item(tr("Permissões…", "Permissions…"), #selector(openOnboarding), "", "checkmark.shield"))
         menu.addItem(item(tr("Sobre o MeetMD", "About MeetMD"), #selector(openAbout), "", "info.circle"))
         menu.addItem(item(tr("Sair", "Quit"), #selector(quit), "q", "power"))
         statusItem.menu = menu
@@ -589,7 +622,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func displayTitle() -> String {
-        title.isEmpty ? tr("sem título", "untitled") : title
+        // Auto-detected ad-hoc Meets often have no title; fall back to the project,
+        // which is the meaningful label the user configured for them.
+        if !title.isEmpty { return title }
+        if !meetingProject.isEmpty { return meetingProject }
+        return tr("sem título", "untitled")
     }
 
     private func item(_ title: String, _ selector: Selector, _ key: String, _ symbol: String) -> NSMenuItem {
@@ -832,6 +869,98 @@ final class SettingsWindowController: NSWindowController {
             DispatchQueue.main.async { done(err == nil && ok ? obj : nil) }
         }.resume()
     }
+}
+
+// MARK: - First-run onboarding
+
+// OnboardingWindowController guides the user through the three TCC permissions
+// MeetMD needs, with one-click deep links into the relevant System Settings panes.
+final class OnboardingWindowController: NSWindowController {
+    init() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 360),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = tr("Bem-vindo ao MeetMD", "Welcome to MeetMD")
+        super.init(window: window)
+        buildUI()
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    func show() {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.center()
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func buildUI() {
+        let intro = NSTextField(wrappingLabelWithString: tr(
+            "Pro MeetMD gravar suas reuniões, conceda estas permissões (uma vez). Clique em “Abrir Ajustes” e ative o MeetMD em cada painel.",
+            "For MeetMD to record your meetings, grant these permissions (once). Click “Open Settings” and enable MeetMD in each pane."))
+        intro.font = .systemFont(ofSize: 12)
+
+        let rows = NSStackView(views: [
+            permissionRow(tr("Gravação de Tela", "Screen Recording"),
+                          tr("captura a voz dos participantes", "captures the participants' audio"), pane: "Privacy_ScreenCapture"),
+            permissionRow(tr("Microfone", "Microphone"),
+                          tr("captura a sua voz", "captures your voice"), pane: "Privacy_Microphone"),
+            permissionRow(tr("Automação ▸ Safari", "Automation ▸ Safari"),
+                          tr("detecta reuniões do Google Meet abertas", "detects open Google Meet tabs"), pane: "Privacy_Automation"),
+        ])
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 14
+
+        let done = NSButton(title: tr("Concluir", "Done"), target: self, action: #selector(finish))
+        done.bezelStyle = .rounded
+        done.keyEquivalent = "\r"
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let buttons = NSStackView(views: [spacer, done])
+        buttons.orientation = .horizontal
+
+        let content = NSStackView(views: [intro, rows, buttons])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 18
+        content.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        window?.contentView = content
+        NSLayoutConstraint.activate([
+            buttons.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -40),
+            rows.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -40),
+            intro.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -40),
+        ])
+    }
+
+    private func permissionRow(_ name: String, _ why: String, pane: String) -> NSView {
+        let title = NSTextField(labelWithString: name)
+        title.font = .boldSystemFont(ofSize: 13)
+        let desc = NSTextField(labelWithString: why)
+        desc.font = .systemFont(ofSize: 11)
+        desc.textColor = .secondaryLabelColor
+        let text = NSStackView(views: [title, desc])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 1
+        let open = NSButton(title: tr("Abrir Ajustes", "Open Settings"), target: self, action: #selector(openPane(_:)))
+        open.bezelStyle = .rounded
+        open.identifier = NSUserInterfaceItemIdentifier(pane)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [text, spacer, open])
+        row.orientation = .horizontal
+        row.spacing = 10
+        return row
+    }
+
+    @objc private func openPane(_ sender: NSButton) {
+        guard let pane = sender.identifier?.rawValue,
+              let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func finish() { window?.close() }
 }
 
 // Hidden dev/build helper: `MeetMD --render <state> <out.png> [px]` renders one
