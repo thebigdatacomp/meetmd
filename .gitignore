@@ -41,5 +41,6 @@ scripts/claude/tmp/
 docs/private/
 *.private.md
 
-# .app bundle (artefato de build)
+# .app bundle + .dmg (artefatos de build)
 menubar/MeetMD.app/
+menubar/*.dmg

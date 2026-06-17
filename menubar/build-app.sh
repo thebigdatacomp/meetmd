@@ -122,27 +122,64 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Identidade de assinatura: usa o cert self-signed estável "MeetMD Dev" se existir
-# (rode menubar/setup-dev-cert.sh uma vez) — as permissões TCC colam entre rebuilds.
-# Sem o cert, cai pra ad-hoc: a identidade muda a cada rebuild e o macOS invalida
-# as permissões (Gravação de Tela, Microfone, Automação), exigindo reconcessão.
-DEV_KEYCHAIN="$HOME/Library/Keychains/meetmd-codesign.keychain-db"
-DEV_IDENTITY="MeetMD Dev"
-SIGN_ARGS=(--force --sign -)
-if security find-identity -p codesigning "$DEV_KEYCHAIN" 2>/dev/null | grep -q "$DEV_IDENTITY"; then
-	security unlock-keychain -p meetmd-dev "$DEV_KEYCHAIN" 2>/dev/null || true
-	SIGN_ARGS=(--force --sign "$DEV_IDENTITY" --keychain "$DEV_KEYCHAIN")
-	echo "==> assinando com '$DEV_IDENTITY' (identidade estável p/ TCC), de dentro pra fora"
-else
-	echo "==> assinatura ad-hoc, de dentro pra fora (rode setup-dev-cert.sh p/ permissões estáveis)"
-fi
-# Ordem inside-out: helpers primeiro, o .app por último (assina o principal e sela o bundle).
-codesign "${SIGN_ARGS[@]}" "$MACOS/meetmd-bridge"
-codesign "${SIGN_ARGS[@]}" "$MACOS/whisper-cli"
-codesign "${SIGN_ARGS[@]}" "$MACOS/system-audio-recorder"
-codesign "${SIGN_ARGS[@]}" "$APP"
+ENT="$ROOT/menubar/entitlements"
+DEVID="$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $2; exit}')"
 
-echo "==> verificando"
-codesign --verify --verbose "$APP" 2>&1 | sed 's/^/   /'
+if [ -n "${RELEASE:-}" ] && [ -n "$DEVID" ]; then
+	# RELEASE: Developer ID + hardened runtime + secure timestamp + entitlements,
+	# inside-out. This is the distributable, notarizable signature.
+	echo "==> assinatura RELEASE (Developer ID + hardened runtime + entitlements)"
+	sign_rel() { codesign --force --options runtime --timestamp --sign "$DEVID" --entitlements "$2" "$1"; }
+	sign_rel "$MACOS/whisper-cli" "$ENT/whisper.plist"
+	sign_rel "$MACOS/system-audio-recorder" "$ENT/app.plist"
+	sign_rel "$MACOS/meetmd-bridge" "$ENT/app.plist"
+	sign_rel "$APP" "$ENT/app.plist" # main executable + bundle seal
+else
+	# DEV: stable self-signed cert "MeetMD Dev" if present (run setup-dev-cert.sh),
+	# else ad-hoc. No hardened runtime/timestamp — fast local iteration only.
+	DEV_KEYCHAIN="$HOME/Library/Keychains/meetmd-codesign.keychain-db"
+	DEV_IDENTITY="MeetMD Dev"
+	SIGN_ARGS=(--force --sign -)
+	if security find-identity -p codesigning "$DEV_KEYCHAIN" 2>/dev/null | grep -q "$DEV_IDENTITY"; then
+		security unlock-keychain -p meetmd-dev "$DEV_KEYCHAIN" 2>/dev/null || true
+		SIGN_ARGS=(--force --sign "$DEV_IDENTITY" --keychain "$DEV_KEYCHAIN")
+		echo "==> assinatura dev: '$DEV_IDENTITY' (identidade estável p/ TCC), de dentro pra fora"
+	else
+		echo "==> assinatura ad-hoc, de dentro pra fora (RELEASE=1 p/ Developer ID; setup-dev-cert.sh p/ TCC estável)"
+	fi
+	codesign "${SIGN_ARGS[@]}" "$MACOS/meetmd-bridge"
+	codesign "${SIGN_ARGS[@]}" "$MACOS/whisper-cli"
+	codesign "${SIGN_ARGS[@]}" "$MACOS/system-audio-recorder"
+	codesign "${SIGN_ARGS[@]}" "$APP"
+fi
+
+echo "==> verificando assinatura"
+codesign --verify --strict --verbose "$APP" 2>&1 | sed 's/^/   /'
+
+# Notarização + staple (RELEASE, quando há perfil de credencial do notarytool).
+if [ -n "${RELEASE:-}" ] && [ -n "${NOTARY_PROFILE:-}" ]; then
+	echo "==> notarizando via perfil '$NOTARY_PROFILE' (pode levar alguns minutos)"
+	NZIP="$(mktemp -d)/MeetMD.zip"
+	ditto -c -k --keepParent "$APP" "$NZIP"
+	xcrun notarytool submit "$NZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+	xcrun stapler staple "$APP"
+	rm -rf "$(dirname "$NZIP")"
+	echo "==> validando notarização"
+	xcrun stapler validate "$APP" && spctl -a -vvv -t install "$APP" 2>&1 | sed 's/^/   /'
+fi
+
+# Empacota um .dmg de arrastar-pra-Aplicativos (RELEASE).
+if [ -n "${RELEASE:-}" ]; then
+	echo "==> empacotando .dmg"
+	DMG="$ROOT/menubar/MeetMD.dmg"
+	rm -f "$DMG"
+	STAGE="$(mktemp -d)"
+	cp -R "$APP" "$STAGE/"
+	ln -s /Applications "$STAGE/Applications"
+	hdiutil create -volname MeetMD -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+	rm -rf "$STAGE"
+	echo "   .dmg → $DMG"
+fi
+
 echo "OK → $APP"
-echo "   Para usar: abra MeetMD.app (ou: open '$APP'). Conceda as permissões na 1ª gravação."
+echo "   Dev: abra MeetMD.app. Release: RELEASE=1 NOTARY_PROFILE=meetmd-notary ./menubar/build-app.sh"
