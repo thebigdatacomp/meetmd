@@ -123,9 +123,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 ENT="$ROOT/menubar/entitlements"
-DEVID="$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $2; exit}')"
+# Pin the signing identity via DEVELOPER_ID (hash or name), else pick the first
+# Developer ID Application identity in the keychain.
+DEVID="${DEVELOPER_ID:-$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $2; exit}')}"
 
-if [ -n "${RELEASE:-}" ] && [ -n "$DEVID" ]; then
+if [ -n "${RELEASE:-}" ]; then
+	if [ -z "$DEVID" ]; then
+		echo "ERRO: RELEASE=1 mas nenhum 'Developer ID Application' no keychain." >&2
+		echo "      Instale o cert (ou aponte DEVELOPER_ID=<hash>), ou rode sem RELEASE p/ build de dev." >&2
+		exit 1
+	fi
 	# RELEASE: Developer ID + hardened runtime + secure timestamp + entitlements,
 	# inside-out. This is the distributable, notarizable signature.
 	echo "==> assinatura RELEASE (Developer ID + hardened runtime + entitlements)"
@@ -156,14 +163,22 @@ fi
 echo "==> verificando assinatura"
 codesign --verify --strict --verbose "$APP" 2>&1 | sed 's/^/   /'
 
+# Temp dirs for notarization/dmg staging — cleaned up even if a step aborts.
+NWORK=""
+STAGE=""
+trap 'rm -rf "$NWORK" "$STAGE" 2>/dev/null || true' EXIT
+
 # Notarização + staple (RELEASE, quando há perfil de credencial do notarytool).
 if [ -n "${RELEASE:-}" ] && [ -n "${NOTARY_PROFILE:-}" ]; then
 	echo "==> notarizando via perfil '$NOTARY_PROFILE' (pode levar alguns minutos)"
-	NZIP="$(mktemp -d)/MeetMD.zip"
-	ditto -c -k --keepParent "$APP" "$NZIP"
-	xcrun notarytool submit "$NZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+	NWORK="$(mktemp -d)"
+	ditto -c -k --keepParent "$APP" "$NWORK/MeetMD.zip"
+	if ! xcrun notarytool submit "$NWORK/MeetMD.zip" --keychain-profile "$NOTARY_PROFILE" --wait; then
+		echo "ERRO: notarização não foi aceita. Veja o motivo com:" >&2
+		echo "      xcrun notarytool log <submission-id> --keychain-profile $NOTARY_PROFILE" >&2
+		exit 1
+	fi
 	xcrun stapler staple "$APP"
-	rm -rf "$(dirname "$NZIP")"
 	echo "==> validando notarização"
 	xcrun stapler validate "$APP" && spctl -a -vvv -t install "$APP" 2>&1 | sed 's/^/   /'
 fi
@@ -177,8 +192,10 @@ if [ -n "${RELEASE:-}" ]; then
 	cp -R "$APP" "$STAGE/"
 	ln -s /Applications "$STAGE/Applications"
 	hdiutil create -volname MeetMD -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-	rm -rf "$STAGE"
 	echo "   .dmg → $DMG"
+	if [ -z "${NOTARY_PROFILE:-}" ]; then
+		echo "   AVISO: .dmg NÃO notarizado (sem NOTARY_PROFILE) — Gatekeeper bloqueará em outros Macs."
+	fi
 fi
 
 echo "OK → $APP"

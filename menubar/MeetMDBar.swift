@@ -324,16 +324,25 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func updateIcon() {
         let button = statusItem.button
         button?.image = ClaudeIcon.image(for: state, online: online, asleep: snoozing)
-        // While recording/transcribing, show the meeting name next to the icon.
-        if online, state == .recording || state == .processing {
-            let name = (state == .recording && kind == kindNote) ? tr("Nota de voz", "Voice note") : displayTitle()
-            let shown = name.count > 30 ? String(name.prefix(29)) + "…" : name
-            button?.title = " – " + shown
+        // While recording/transcribing, show the meeting name next to the icon —
+        // but only when there's a real name, so there's no dangling separator.
+        let name = recordingName()
+        if online, state == .recording || state == .processing, !name.isEmpty {
+            button?.title = " – " + name
             button?.imagePosition = .imageLeading
         } else {
             button?.title = ""
             button?.imagePosition = .imageOnly
         }
+    }
+
+    // recordingName is the label shown in the menu bar while active: the note
+    // label, else the title, else the project — empty when none, never "untitled".
+    private func recordingName() -> String {
+        let raw = (state == .recording && kind == kindNote)
+            ? tr("Nota de voz", "Voice note")
+            : (title.isEmpty ? meetingProject : title)
+        return raw.count > 30 ? String(raw.prefix(29)) + "…" : raw
     }
 
     // --- prompt on detection ------------------------------------------------
