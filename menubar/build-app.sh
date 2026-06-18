@@ -192,10 +192,19 @@ if [ -n "${RELEASE:-}" ]; then
 	cp -R "$APP" "$STAGE/"
 	ln -s /Applications "$STAGE/Applications"
 	hdiutil create -volname MeetMD -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
-	echo "   .dmg → $DMG"
-	if [ -z "${NOTARY_PROFILE:-}" ]; then
+	# Notarize+staple the .dmg itself so a downloaded (quarantined) dmg opens
+	# cleanly — the app inside is already stapled for the extracted-app case.
+	if [ -n "${NOTARY_PROFILE:-}" ]; then
+		echo "==> notarizando o .dmg"
+		if ! xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait; then
+			echo "ERRO: notarização do .dmg falhou (veja 'xcrun notarytool log')." >&2
+			exit 1
+		fi
+		xcrun stapler staple "$DMG" && xcrun stapler validate "$DMG"
+	else
 		echo "   AVISO: .dmg NÃO notarizado (sem NOTARY_PROFILE) — Gatekeeper bloqueará em outros Macs."
 	fi
+	echo "   .dmg → $DMG"
 fi
 
 echo "OK → $APP"
