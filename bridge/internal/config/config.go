@@ -19,7 +19,7 @@ const (
 	defaultVADModel = "ggml-silero-v5.1.2.bin"
 	defaultInterval = 3      // seconds, auto-detect poll
 	defaultMode     = "ask"  // auto-detect: prompt before recording
-	defaultUILang   = "auto" // UI + .md output language: follow the OS
+	defaultUILang   = LangEN // UI + .md output language; "auto" follows the OS, "pt" forces Portuguese
 
 	configDirName  = ".meetmd"
 	configFileName = "config.yaml"
