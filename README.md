@@ -1,8 +1,34 @@
-# MeetMD
+<div align="center">
 
-[![CI](https://github.com/thebigdatacomp/meetmd/actions/workflows/ci.yml/badge.svg)](https://github.com/thebigdatacomp/meetmd/actions/workflows/ci.yml)
+<a href="https://github.com/thebigdatacomp/meetmd/actions/workflows/ci.yml"><img src="https://github.com/thebigdatacomp/meetmd/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="Apache 2.0">
+<img src="https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple&logoColor=white" alt="macOS · Apple Silicon">
+<img src="https://img.shields.io/badge/transcri%C3%A7%C3%A3o-100%25%20local-success" alt="100% local">
 
-Captura reuniões e entrega a transcrição **estruturada em Markdown**, pronta para o Claude (ou qualquer LLM) processar — sumarizar, extrair ações, cruzar com outros documentos.
+<br><br>
+
+<img src="assets/meetmd-icon.png" alt="MeetMD" width="120">
+
+<h1>MeetMD</h1>
+
+<p><strong>Suas reuniões viram Markdown — local, privado, pronto pro Claude.</strong><br>
+Captura o áudio da reunião, transcreve <strong>na sua máquina</strong> (o áudio nunca sai) e grava a transcrição estruturada num diretório que o Claude lê.</p>
+
+<a href="https://github.com/thebigdatacomp/meetmd/releases/latest"><img src="https://img.shields.io/badge/⬇%20Baixar%20para%20Mac-MeetMD.dmg-orange?style=for-the-badge&logo=apple" alt="Baixar para Mac"></a>
+
+</div>
+
+---
+
+## Por que
+
+A transcrição roda **localmente** com whisper.cpp (Metal) — nada de mandar áudio de reunião pra nuvem de terceiros. A saída é **Markdown** num diretório do seu projeto, então o Claude (ou qualquer LLM) resume, extrai ações e cruza com seus outros docs.
+
+- 🔒 **100% local** — o áudio nunca sai da sua máquina
+- 🎙️ **Todos os participantes** — captura no nível do SO (loopback), agnóstico de navegador (e até de apps desktop)
+- 🗣️ **Diarização** Você vs. Participantes (seu mic num canal separado)
+- 📝 **Nota de voz** rápida — só microfone, sem permissão de tela
+- 🧠 **Pronto pro Claude** — abre a pasta e pede resumo/ações
 
 ## Como funciona
 
@@ -18,89 +44,80 @@ Captura reuniões e entrega a transcrição **estruturada em Markdown**, pronta 
 └──────────────┘                                 └──────────┬───────────┘
                                                             │
                                                             v
-                                          <output-root>/YYYY-MM-DD-hhmm-titulo/
+                                          ~/.meetmd/recordings/meetings/<reunião>/
                                             ├── transcript.md
                                             ├── summary.md   (template)
                                             ├── actions.md   (template)
                                             └── meeting.md   (metadados)
 ```
 
-A extensão **não** captura áudio nem escreve arquivos (o sandbox do navegador não permite e seria preso a um browser). Quem faz o trabalho pesado é o **bridge local em Go**: captura o áudio do sistema (todos os participantes, agnóstico de navegador e até de apps desktop), transcreve com Whisper local e grava a estrutura de Markdown num diretório do seu projeto.
+A extensão **não** captura áudio nem escreve arquivos (o sandbox do navegador não permite e prenderia a um browser). Quem faz o trabalho pesado é o **bridge local em Go**: captura o áudio do sistema (todos os participantes, agnóstico de navegador), transcreve com Whisper local e grava a estrutura de Markdown. Detalhes e tradeoffs em [docs/specs/2026-06-08-architecture.md](docs/specs/2026-06-08-architecture.md).
 
-## Por que essa arquitetura
+## Instalação (macOS · Apple Silicon)
 
-Dois requisitos definiram o desenho:
+1. **[Baixe o `MeetMD.dmg`](https://github.com/thebigdatacomp/meetmd/releases/latest)** → arraste pro **Aplicativos** → abra.
+2. O **onboarding** guia as 3 permissões: **Gravação de Tela** (participantes), **Microfone** (sua voz), **Automação ▸ Safari** (detecção do Meet).
+3. Entre num Google Meet no **Safari** (detecção automática) ou grave manual pelo ícone na barra.
 
-1. **Áudio de todos os participantes** → captura no nível do SO (loopback), não só o mic.
-2. **Agnóstico de navegador** → o núcleo vive fora do navegador (bridge nativo), funcionando em qualquer browser e até no app desktop do Zoom/Teams.
+O app é **assinado (Developer ID) e notarizado** pela Apple — abre sem o aviso de "desenvolvedor não identificado". É **autocontido** (whisper + modelos + helper no bundle), então roda **sem nenhuma config**.
 
-Detalhes e tradeoffs em [docs/specs/2026-06-08-architecture.md](docs/specs/2026-06-08-architecture.md).
+## Usar
+
+- **Auto:** entre num Google Meet no Safari → o app pergunta *"Gravar?"* → **Gravar**.
+- **Manual:** ícone na barra → **Iniciar gravação**.
+- **Nota de voz:** ícone na barra → **Nova nota de voz** → dite algo (só mic, sem permissão de tela) → **Parar e salvar nota**.
+- A saída vai pra `~/.meetmd/recordings/` (reuniões em `meetings/[<projeto>/]`, notas em `notes/`). Abra a pasta no Claude e peça resumo/ações.
+
+## Build do código
+
+> Requer **Apple Silicon**, Go 1.21+ (o toolchain 1.25 é baixado via `GOTOOLCHAIN`) e Swift (Xcode CLT).
+
+```bash
+brew install cmake             # buildar o whisper com Metal
+xcode-select --install         # swiftc
+
+./menubar/build-app.sh         # baixa modelos + whisper, builda static Metal, empacota no MeetMD.app
+open menubar/MeetMD.app
+```
+
+A 1ª vez baixa os modelos (~490MB) e compila o whisper (alguns minutos); depois fica cacheado. Para um build **distribuível** (Developer ID + notarização + `.dmg`):
+
+```bash
+RELEASE=1 NOTARY_PROFILE=<seu-perfil-notarytool> ./menubar/build-app.sh
+```
+
+Sem `RELEASE`, o build é de **dev** (self-signed/ad-hoc) — perfeito pra iterar localmente.
+
+### Modo dev (rebuild rápido, sem empacotar)
+
+```bash
+cd bridge && make run
+cd menubar && swiftc -O MeetMDBar.swift -o meetmd-bar -framework Cocoa && ./meetmd-bar &
+```
 
 ## Componentes
 
 | Componente | Stack | Papel |
 |------------|-------|-------|
-| `bridge/` | Go 1.25 | Captura de áudio (loopback SO), transcrição (whisper.cpp), escrita dos `.md`, HTTP local |
-| `extension/` | WebExtension (MV3) | Detecta Meet, lê título/participantes do DOM, dispara start/stop no bridge |
+| `bridge/` | Go 1.25 | Captura de áudio (loopback SO), transcrição (whisper.cpp Metal), escrita dos `.md`, HTTP local |
+| `menubar/` | Swift (AppKit) | App de menu-bar + helper de captura (ScreenCaptureKit) |
+| `extension/` | WebExtension (MV3) | Detecta Meet, lê título/participantes do DOM, dispara start/stop |
 
-## Para testers (macOS)
+## Configuração (opcional)
 
-> Requer **Apple Silicon**, Go 1.21+ (o toolchain 1.25 é baixado automaticamente via `GOTOOLCHAIN`) e Swift (Xcode CLT).
-
-### 1. Pré-requisitos (uma vez)
-
-```bash
-brew install cmake          # buildar o whisper com Metal
-xcode-select --install      # swiftc
-```
-
-### 2. Build e abrir
-
-```bash
-./menubar/build-app.sh      # baixa modelos + whisper, builda static Metal, empacota no MeetMD.app
-open menubar/MeetMD.app      # ícone (mascote do Claude) na barra — sobe o bridge sozinho, sem terminal
-```
-
-A 1ª vez baixa os modelos (~490MB) e compila o whisper (alguns minutos); depois fica cacheado. O `.app` é **autocontido** (resolve whisper/modelos do bundle) — **não precisa de config** (ver [Configuração](#configuração-opcional)).
-
-### 3. Permissões (na 1ª gravação) — conceda ao **MeetMD**
-- **Gravação de Tela** → participantes · **Microfone** → sua voz · **Automação ▸ Safari** → detecção do Meet.
-
-Como o app tem identidade própria, as permissões **colam** (não somem entre execuções).
-
-### 4. Usar
-- **Auto:** entre num Google Meet no **Safari** → o app pergunta *"Gravar?"* → **Gravar**.
-- **Manual:** clique no ícone na barra → **Iniciar gravação**.
-- **Nota de voz:** ícone na barra → **Nova nota de voz** → dite uma anotação rápida (só microfone, **sem** permissão de tela) → **Parar e salvar nota**.
-- A saída vai pra `~/.meetmd/recordings/`: reuniões em `meetings/[<projeto>/]`, notas em `notes/`. Abra a pasta no Claude e peça resumo/ações. ("Abrir pasta dos arquivos" no menu abre `recordings/`.)
-
-### Configuração (opcional)
-O `.app` é **autocontido** e roda **sem nenhum config** — whisper, modelos e helper são resolvidos do próprio bundle. O `~/.meetmd/config.yaml` **não é gerado na instalação**: ele só passa a existir quando você **salva em Configurações** (ou cria à mão), e os caminhos são derivados do **seu** home em runtime (nunca hardcoded). Chaves úteis pra customizar:
+O `.app` roda **sem config**. O `~/.meetmd/config.yaml` **não é gerado na instalação** — só existe se você salvar em Configurações (ou criar à mão), e os caminhos derivam do **seu** home em runtime. Chaves úteis:
 
 | Chave | Default | Pra quê |
 |-------|---------|---------|
-| `recordings_root` | `~/.meetmd/recordings` | pasta base; reuniões vão em `meetings/`, notas em `notes/` |
+| `recordings_root` | `~/.meetmd/recordings` | pasta base; reuniões em `meetings/`, notas em `notes/` |
 | `language` | `auto` | idioma da transcrição (whisper) |
 | `ui_language` | `auto` | idioma da UI e dos `.md` (`auto` segue o SO, ou `pt`/`en`) |
 
-### Iniciar no login (opcional)
-Ajustes do Sistema ▸ Geral ▸ **Itens de Início** → adicione `MeetMD.app`. (Substitui o antigo `meetmd install`, que rodava o binário cru e tinha as permissões negadas pelo macOS.)
+## Roadmap
 
-### Modo dev (rebuild rápido, sem empacotar)
-
-```bash
-cd bridge && make run                                                       # bridge
-cd menubar && swiftc -O MeetMDBar.swift -o meetmd-bar -framework Cocoa && ./meetmd-bar &
-```
-
-Nesse modo as permissões ficam no VS Code/terminal e o bridge não usa o bundle — aponte o whisper no config (`whisper.bin_path`) ou tenha `whisper-cli` no `PATH` (ex.: o estático em `~/.meetmd/tools/whisper.cpp/build-static/bin/`). Use o `.app` pro fluxo real.
-
-## Status
-
-Funcional no macOS via `.app` **autocontido** (captura sistema+mic, transcrição local Metal, diarização Você/Participantes, nota de voz mic-only, menu-bar, settings, hot-reload, whisper+modelos bundlados). Distribuível: **Developer ID + notarização + `.dmg`** de arrastar (build via `RELEASE=1 NOTARY_PROFILE=... ./menubar/build-app.sh`). Windows/Linux: capturer pendente (`#1`/`#2`).
-
-> O build **oficial** (o `.dmg` que você baixa) é assinado e notarizado pela Apple; ao buildar do código você gera um build de dev (self-signed) ou assina com seu próprio Developer ID.
+- Captura de áudio no **Windows** (WASAPI) e **Linux** (PipeWire) — hoje só macOS
+- **Instruções por voz pro Claude** (loop voz → input)
 
 ## Licença
 
-[Apache License 2.0](LICENSE) — uso, modificação e redistribuição livres (inclusive comercial), com concessão de patente. Veja [LICENSE](LICENSE).
+[Apache License 2.0](LICENSE) — uso, modificação e redistribuição livres (inclusive comercial), com concessão de patente.
