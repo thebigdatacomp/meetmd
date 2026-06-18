@@ -97,4 +97,10 @@ Nesse modo as permissões ficam no VS Code/terminal e o bridge não usa o bundle
 
 ## Status
 
-Funcional no macOS via `.app` **autocontido** (captura sistema+mic, transcrição local Metal, diarização Você/Participantes, nota de voz mic-only, menu-bar, settings, hot-reload, whisper+modelos bundlados). Falta pra distribuir: assinatura Developer ID + notarização (#4). Windows/Linux: capturer pendente (`#1`/`#2`).
+Funcional no macOS via `.app` **autocontido** (captura sistema+mic, transcrição local Metal, diarização Você/Participantes, nota de voz mic-only, menu-bar, settings, hot-reload, whisper+modelos bundlados). Distribuível: **Developer ID + notarização + `.dmg`** de arrastar (build via `RELEASE=1 NOTARY_PROFILE=... ./menubar/build-app.sh`). Windows/Linux: capturer pendente (`#1`/`#2`).
+
+> O build **oficial** (o `.dmg` que você baixa) é assinado e notarizado pela Apple; ao buildar do código você gera um build de dev (self-signed) ou assina com seu próprio Developer ID.
+
+## Licença
+
+[Apache License 2.0](LICENSE) — uso, modificação e redistribuição livres (inclusive comercial), com concessão de patente. Veja [LICENSE](LICENSE).
