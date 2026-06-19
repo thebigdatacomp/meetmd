@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +112,29 @@ func TestSleepWake(t *testing.T) {
 	mgr.Wake()
 	if mgr.Asleep() || mgr.Status().Asleep {
 		t.Error("manager should be awake after Wake()")
+	}
+}
+
+func TestPreserveAudioMovesWAVsOnFailure(t *testing.T) {
+	root := t.TempDir()
+	wd := t.TempDir() // stand-in for the temp capture workdir
+	sys := filepath.Join(wd, "rec.wav")
+	mic := filepath.Join(wd, "rec.mic.wav")
+	for _, p := range []string{sys, mic} {
+		if err := os.WriteFile(p, []byte("audio"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cause := errors.New("whisper failed")
+	err := preserveAudio(root, "2026-06-19-0902-x", audio.Recording{SystemWav: sys, MicWav: mic}, cause)
+	if err == nil || !strings.Contains(err.Error(), "preserved in") || !errors.Is(err, cause) {
+		t.Fatalf("expected wrapped error mentioning the recovery dir, got %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(root, "recovery", "2026-06-19-0902-x", "rec.wav")); e != nil {
+		t.Errorf("system WAV not moved to recovery: %v", e)
+	}
+	if _, e := os.Stat(sys); !os.IsNotExist(e) {
+		t.Errorf("original WAV should have been moved, still present")
 	}
 }
 

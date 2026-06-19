@@ -433,7 +433,22 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc private func pause() { post("/sessions/\(sessionID ?? "")/pause") }
     @objc private func resume() { post("/sessions/\(sessionID ?? "")/resume") }
-    @objc private func stop() { post("/sessions/\(sessionID ?? "")/stop") }
+
+    // stop surfaces failures: a recording must never fail silently — if saving
+    // errors, tell the user (the raw audio is kept under ~/.meetmd for recovery).
+    @objc private func stop() {
+        guard let id = sessionID, !id.isEmpty else { return }
+        request("POST", "/sessions/\(id)/stop") { [weak self] data, ok in
+            guard let self = self else { return }
+            if !ok {
+                let msg = self.errorMessage(from: data) ?? tr(
+                    "Não foi possível salvar a gravação. O áudio bruto foi mantido em ~/.meetmd para recuperação.",
+                    "Couldn't save the recording. The raw audio was kept under ~/.meetmd for recovery.")
+                DispatchQueue.main.async { self.showError(msg) }
+            }
+            self.poll()
+        }
+    }
 
     private func post(_ path: String) {
         guard sessionID != nil else { return }

@@ -204,7 +204,7 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 	rec, capErr := m.capturer.Stop()
 	segments, err := m.transcribeRecording(ctx, cfg, rec, capErr)
 	if err != nil {
-		return writer.Result{}, err
+		return writer.Result{}, preserveAudio(cfg.RecordingsRoot, meeting.ID, rec, err)
 	}
 
 	var res writer.Result
@@ -214,7 +214,7 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 		res, err = writer.Write(outputRoot(cfg.MeetingsRoot(), meeting.Project), meeting, segments, cfg.ResolvedUILang())
 	}
 	if err != nil {
-		return writer.Result{}, err
+		return writer.Result{}, preserveAudio(cfg.RecordingsRoot, meeting.ID, rec, err)
 	}
 	if cfg.Audio.DeleteWavOnFinish {
 		for _, p := range []string{rec.SystemWav, rec.MicWav} {
@@ -381,6 +381,30 @@ func outputRoot(base, project string) string {
 		return base
 	}
 	return filepath.Join(base, project)
+}
+
+// preserveAudio moves a failed recording's raw WAVs into a recovery folder under
+// the recordings root (not the volatile temp dir), so a transcription/write
+// failure never loses the audio, and annotates the error with where to find it.
+func preserveAudio(root, id string, rec audio.Recording, cause error) error {
+	dir := filepath.Join(root, "recovery", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return cause
+	}
+	moved := false
+	for _, p := range []string{rec.SystemWav, rec.MicWav} {
+		if p == "" {
+			continue
+		}
+		if err := os.Rename(p, filepath.Join(dir, filepath.Base(p))); err == nil {
+			moved = true
+		}
+	}
+	if !moved {
+		_ = os.Remove(dir)
+		return cause
+	}
+	return fmt.Errorf("%w (raw audio preserved in %s)", cause, dir)
 }
 
 // transcribeRecording transcribes whichever channels were captured, labels each

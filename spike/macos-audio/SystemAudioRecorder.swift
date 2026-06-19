@@ -49,6 +49,11 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var micFile: AVAudioFile?
     private var micSamplesWritten: AVAudioFramePosition = 0
 
+    // stopping guards the stream-death restart (so an intentional stop doesn't
+    // trigger a restart); systemRestarts caps recovery attempts.
+    private var stopping = false
+    private var systemRestarts = 0
+
     // paused is read on the audio queue and written from signal handlers, so it
     // is guarded by a lock. While paused, samples are dropped, which keeps the
     // recording continuous (no gap) across pause/resume.
@@ -144,11 +149,16 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stop() async throws {
-        try await stream?.stopCapture()
-        audioFile = nil // flush/close
+        stopping = true
+        try? await stream?.stopCapture() // a dead stream must NOT block finalization below
+        stream = nil
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
+        // Closing the AVAudioFiles flushes their WAV headers. This MUST run even if
+        // stopCapture threw (e.g. the stream already died) — otherwise the files are
+        // left with a 0-frame header and the whole recording is unreadable.
+        audioFile = nil
         micFile = nil
     }
 
@@ -170,6 +180,19 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         FileHandle.standardError.write("stream stopped: \(error)\n".data(using: .utf8)!)
+        // The system capture stream can die mid-recording (display change, etc.).
+        // Restart it (writing continues to the same WAV) so we don't silently lose
+        // the participants' audio for the rest of the meeting.
+        guard !stopping, captureSystem, systemRestarts < 5 else { return }
+        systemRestarts += 1
+        Task {
+            do {
+                try await startSystem()
+                FileHandle.standardError.write("system stream restarted (#\(systemRestarts))\n".data(using: .utf8)!)
+            } catch {
+                FileHandle.standardError.write("system stream restart failed: \(error)\n".data(using: .utf8)!)
+            }
+        }
     }
 
     var seconds: Double { Double(max(samplesWritten, micSamplesWritten)) / Output.sampleRate }
