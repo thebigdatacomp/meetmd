@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,6 +104,19 @@ func (c *macCapturer) Stop() (Recording, error) {
 		return Recording{}, fmt.Errorf("signal audio helper: %w", err)
 	}
 	waitErr := cmd.Wait() // exit 2 = ran but captured nothing
+
+	// Repair the WAV headers if the helper didn't finalize them (terminated or
+	// capture stream died before AVAudioFile flushed). Without this the recording
+	// is unreadable and the whole meeting is lost. Best-effort: a repair failure
+	// just leaves the file as-is for usableWav to judge.
+	for _, p := range []string{wav, mic} {
+		if p == "" {
+			continue
+		}
+		if err := finalizeWAV(p); err != nil {
+			log.Printf("audio: não consegui finalizar o WAV %s: %v", p, err)
+		}
+	}
 
 	// In mic-only mode the single WAV is the mic recording, not system audio.
 	rec := Recording{SystemWav: usableWav(wav), MicWav: usableWav(mic)}
