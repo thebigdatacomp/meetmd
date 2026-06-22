@@ -1,14 +1,22 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/thebigdatacomp/meetmd/internal/model"
 	"github.com/thebigdatacomp/meetmd/internal/session"
 )
+
+// shutdownStopTimeout caps how long /shutdown waits for an in-progress recording
+// to finalize+transcribe before exiting anyway, so a stuck transcription can't
+// keep the bridge (and its capture helper) alive after the app has quit.
+const shutdownStopTimeout = 2 * time.Minute
 
 // startRequest is the JSON body for POST /sessions/start.
 type startRequest struct {
@@ -143,6 +151,38 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+// handleShutdown finalizes any active recording and exits the bridge process.
+// The menu-bar app calls this on quit so no capture helper is left orphaned
+// (which would keep the macOS screen-capture indicator lit). It acks immediately
+// so the quitting app isn't blocked, then stops + exits in the background.
+func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "shutting down"})
+	go func() {
+		time.Sleep(150 * time.Millisecond) // let the HTTP response flush before exit
+		if id, ok := s.mgr.ActiveID(); ok {
+			// Stop also SIGTERMs the capture helper, so the indicator clears within
+			// seconds even though transcription continues. Capped so it can't hang.
+			done := make(chan struct{})
+			go func() {
+				if _, err := s.mgr.Stop(context.Background(), id); err != nil {
+					log.Printf("shutdown: stop active recording: %v", err)
+				}
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(shutdownStopTimeout):
+				log.Printf("shutdown: stop timed out after %s — exiting anyway", shutdownStopTimeout)
+			}
+		}
+		log.Printf("shutdown requested — exiting")
+		os.Exit(0)
+	}()
 }
 
 // --- helpers ----------------------------------------------------------------

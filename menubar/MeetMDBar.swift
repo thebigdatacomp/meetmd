@@ -259,6 +259,19 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
+    // On quit, tell the bridge to finalize any recording and exit, so its capture
+    // helper isn't orphaned (which would keep the macOS screen-capture indicator
+    // lit). Synchronous so the bridge gets the request before this process dies.
+    func applicationWillTerminate(_ notification: Notification) {
+        guard let url = URL(string: Bridge.base + "/shutdown") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 2
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { _, _, _ in sem.signal() }.resume()
+        _ = sem.wait(timeout: .now() + 2.5)
+    }
+
     @objc private func openOnboarding() {
         if onboardingController == nil { onboardingController = OnboardingWindowController() }
         onboardingController?.show()
