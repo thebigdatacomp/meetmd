@@ -3,9 +3,11 @@
 package audio
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -80,12 +82,32 @@ func (c *macCapturer) launch(sessionID string, micOnly bool) error {
 	}
 
 	cmd := exec.Command(helper, args...)
-	cmd.Stderr = os.Stderr
+	// Capture the helper's output into the bridge log (instead of inheriting the
+	// process's stdio), so its diagnostics — capture start/finish, stream death,
+	// restarts, mic errors — land in ~/.meetmd/logs/bridge.log for debugging.
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("pipe audio helper stdout: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("pipe audio helper stderr: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start audio helper: %w", err)
 	}
+	go logHelperOutput(stdout)
+	go logHelperOutput(stderr)
 	c.cmd, c.wavPath, c.micPath, c.micOnly = cmd, wav, mic, micOnly
 	return nil
+}
+
+// logHelperOutput forwards each line the audio helper emits to the bridge log.
+func logHelperOutput(r io.Reader) {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		log.Printf("helper: %s", sc.Text())
+	}
 }
 
 func (c *macCapturer) Stop() (Recording, error) {

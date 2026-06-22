@@ -57,6 +57,11 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     // paused is read on the audio queue and written from signal handlers, so it
     // is guarded by a lock. While paused, samples are dropped, which keeps the
     // recording continuous (no gap) across pause/resume.
+    // While recording we hold a power-management activity so the display/system
+    // don't sleep — display sleep invalidates the SCStream and kills the system
+    // capture mid-meeting.
+    private var activity: NSObjectProtocol?
+
     private let lock = NSLock()
     private var pausedFlag = false
     var paused: Bool {
@@ -71,6 +76,9 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func start() async throws {
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.idleDisplaySleepDisabled, .idleSystemSleepDisabled],
+            reason: "MeetMD recording")
         if captureSystem {
             try await startSystem()
             // Mic failure (e.g. no permission) must not abort the system capture.
@@ -160,6 +168,10 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         // left with a 0-frame header and the whole recording is unreadable.
         audioFile = nil
         micFile = nil
+        if let a = activity {
+            ProcessInfo.processInfo.endActivity(a)
+            activity = nil
+        }
     }
 
     // SCStreamOutput: receives audio sample buffers.
