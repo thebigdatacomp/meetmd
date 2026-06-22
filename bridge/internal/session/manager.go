@@ -236,6 +236,17 @@ func (m *Manager) Cancel(id string) error {
 	return m.capturer.Cancel()
 }
 
+// ActiveID returns the in-progress recording's ID and true, or ("", false) when
+// nothing is recording. Used on shutdown to finalize a recording before exiting.
+func (m *Manager) ActiveID() (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.current == nil {
+		return "", false
+	}
+	return m.current.ID, true
+}
+
 // Status returns the current state.
 func (m *Manager) Status() Status {
 	m.mu.Lock()

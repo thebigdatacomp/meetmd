@@ -48,6 +48,9 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var engine: AVAudioEngine?
     private var micFile: AVAudioFile?
     private var micSamplesWritten: AVAudioFramePosition = 0
+    // Observes AVAudioEngineConfigurationChange so the mic tap survives the engine
+    // stopping mid-recording (device/route swap, the meeting app grabbing the mic).
+    private var micConfigObserver: NSObjectProtocol?
 
     // stopping guards the stream-death restart (so an intentional stop doesn't
     // trigger a restart); systemRestarts caps recovery attempts.
@@ -122,8 +125,40 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private func startMic(to dest: URL?) throws {
         guard let micURL = dest else { return }
         let engine = AVAudioEngine()
+        self.engine = engine
+        self.micFile = try AVAudioFile(forWriting: micURL, settings: Output.settings)
+        try installMicTap()
+
+        // The audio engine stops whenever the input configuration changes — the
+        // meeting app grabbing the mic, a device/route swap, AirPods (dis)connecting.
+        // Without re-arming, the tap goes silent for the rest of the meeting
+        // (observed: 3.5s of mic vs 58min of system audio). Re-install and restart.
+        micConfigObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            guard let self = self, !self.stopping else { return }
+            do {
+                try self.installMicTap()
+                FileHandle.standardError.write("mic engine reconfigured — tap re-armed\n".data(using: .utf8)!)
+            } catch {
+                FileHandle.standardError.write("mic tap re-arm failed: \(error)\n".data(using: .utf8)!)
+            }
+        }
+    }
+
+    // installMicTap (re)installs the tap on the current input and starts the
+    // engine. Safe to call again after a configuration change: it removes any
+    // prior tap and re-reads the input format (which may have changed) so the
+    // converter matches the new device. Writes continue to the same micFile.
+    private func installMicTap() throws {
+        guard let engine = engine, let file = micFile else { return }
         let input = engine.inputNode
+        input.removeTap(onBus: 0) // no-op if none; required before re-installing
         let inputFormat = input.outputFormat(forBus: 0)
+        guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
+            // Input temporarily gone (no device). A later config change re-arms us.
+            throw RecorderError.micUnavailable
+        }
         guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: Output.sampleRate,
                                          channels: Output.channels,
@@ -131,8 +166,6 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
               let converter = AVAudioConverter(from: inputFormat, to: target) else {
             throw RecorderError.micUnavailable
         }
-        let file = try AVAudioFile(forWriting: micURL, settings: Output.settings)
-
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             guard let self = self, !self.paused else { return }
             let ratio = target.sampleRate / inputFormat.sampleRate
@@ -151,13 +184,16 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 self.micSamplesWritten += AVAudioFramePosition(out.frameLength)
             }
         }
+        engine.prepare()
         try engine.start()
-        self.engine = engine
-        self.micFile = file
     }
 
     func stop() async throws {
         stopping = true
+        if let o = micConfigObserver {
+            NotificationCenter.default.removeObserver(o)
+            micConfigObserver = nil
+        }
         try? await stream?.stopCapture() // a dead stream must NOT block finalization below
         stream = nil
         engine?.inputNode.removeTap(onBus: 0)
@@ -315,5 +351,19 @@ for (sig, handler) in signalActions {
     source.resume()
     signalSources.append(source)
 }
+
+// Parent-death watchdog: if the bridge that launched us dies (or the menu-bar app
+// quits and shuts the bridge down), we get reparented to launchd (ppid 1). An
+// orphaned helper otherwise keeps its SCStream — and the macOS screen-capture
+// indicator — alive forever. Poll ppid and self-terminate (finalizing the WAV).
+let parentWatch = DispatchSource.makeTimerSource(queue: .main)
+parentWatch.schedule(deadline: .now() + 2, repeating: 2)
+parentWatch.setEventHandler {
+    if getppid() == 1 {
+        FileHandle.standardError.write("parent gone — self-terminating\n".data(using: .utf8)!)
+        stopAndExit()
+    }
+}
+parentWatch.resume()
 
 RunLoop.main.run()

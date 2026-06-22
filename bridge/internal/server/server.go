@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/wake", s.handleWake)              // end snooze
 	mux.HandleFunc(sessionPrefix, s.handleSessionByID) // /sessions/{id}/{action}
 	mux.HandleFunc("/settings", s.handleSettings)      // GET/PUT user-facing settings
+	mux.HandleFunc("/shutdown", s.handleShutdown)      // finalize recording + exit (app quit)
 	mux.Handle("/", uiServer())                        // control panel (least specific)
 	return mux
 }
