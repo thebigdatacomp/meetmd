@@ -10,8 +10,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/thebigdatacomp/meetmd/internal/audio"
 	"github.com/thebigdatacomp/meetmd/internal/config"
@@ -72,7 +74,29 @@ Exemplos:
 `
 
 // runServe starts the bridge daemon.
+// openLogFile opens (appending) ~/.meetmd/logs/bridge.log for the bridge log tee.
+func openLogFile() (*os.File, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(home, ".meetmd", "logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(filepath.Join(dir, "bridge.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+}
+
 func runServe() {
+	// Tee logs to ~/.meetmd/logs/bridge.log so capture diagnostics (helper stream
+	// death/restart, mic errors) are inspectable — the GUI-launched bridge's
+	// stderr is otherwise hidden in the unified log.
+	if lf, err := openLogFile(); err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, lf))
+	} else {
+		log.Printf("log file unavailable: %v", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
