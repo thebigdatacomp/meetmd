@@ -524,6 +524,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         alert.informativeText = tr("Título e projeto (opcionais).", "Title and project (optional).")
         alert.addButton(withTitle: tr("Iniciar", "Start"))
         alert.addButton(withTitle: tr("Cancelar", "Cancel"))
+        // Draw the brand icon directly instead of falling back to
+        // NSApp.applicationIconImage, which shows a generic placeholder until the
+        // LaunchServices icon cache catches up with a freshly (re)built bundle.
+        alert.icon = ClaudeIcon.appIcon(px: 64)
 
         let width: CGFloat = 240
         let titleField = textField(placeholder: tr("Título", "Title"), value: "")
