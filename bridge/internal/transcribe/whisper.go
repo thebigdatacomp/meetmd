@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/thebigdatacomp/meetmd/internal/model"
 )
@@ -183,7 +184,7 @@ func parseWhisperJSON(data []byte) ([]seg, error) {
 	segs := make([]seg, 0, len(out.Transcription))
 	for _, t := range out.Transcription {
 		text := strings.TrimSpace(t.Text)
-		if text == "" {
+		if text == "" || isHallucination(text) {
 			continue
 		}
 		// Speaker is left unset here; the caller labels each channel
@@ -195,4 +196,51 @@ func parseWhisperJSON(data []byte) ([]seg, error) {
 		})
 	}
 	return segs, nil
+}
+
+// isHallucination reports whether text is Whisper noise rather than speech.
+// On the mic channel VAD is off — it would otherwise fuse utterances across long
+// silences — so near-silent stretches that clear the loudness filter
+// occasionally yield "glyph spam": a single rune (or
+// very few) repeated, e.g. "ლლლ", "ᄢ ᄢ ᄢ", "NÖÖÖ", "ὁ ὁ ὁ". The signal is
+// character *diversity*, not script: real speech in any language (incl.
+// CJK/Cyrillic) uses many distinct runes, while these collapse to one or two.
+// That keeps the check language-agnostic — unlike a non-ASCII test, which would
+// wrongly drop legitimate non-Latin transcripts. It complements dropSilent's
+// loudness filter; it does not replace it.
+func isHallucination(text string) bool {
+	var letters []rune
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			letters = append(letters, r)
+		}
+	}
+	if len(letters) < 4 {
+		return false // too short to judge confidently — keep it
+	}
+	distinct := make(map[rune]struct{}, len(letters))
+	maxRun, run := 0, 0
+	var prev rune
+	for i, r := range letters {
+		distinct[r] = struct{}{}
+		if i > 0 && r == prev {
+			run++
+		} else {
+			run = 1
+		}
+		prev = r
+		if run > maxRun {
+			maxRun = run
+		}
+	}
+	// A run of one letter 4+ times (e.g. "NÖÖÖÖÖ") is the main signal. This is a
+	// content heuristic, not script-aware, so it cannot tell glyph spam from a
+	// genuinely elongated token ("noooo", "hmmmm") or CJK reduplication — those
+	// rare, low-value cases are accepted as collateral to stay language-agnostic.
+	if maxRun >= 4 {
+		return true
+	}
+	// Or many letters drawn from a tiny alphabet (e.g. alternating "ÖaÖaÖa"):
+	// require some length so real short words like "haha"/"papa" are kept.
+	return len(distinct) <= 2 && len(letters) >= 8
 }
