@@ -373,6 +373,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             : tr("Começar a gravar “\(detectedTitle)”?", "Start recording “\(detectedTitle)”?")
         alert.addButton(withTitle: tr("Gravar", "Record"))
         alert.addButton(withTitle: tr("Agora não", "Not now"))
+        alert.addButton(withTitle: tr("Dormir", "Snooze"))
 
         let projectField = textField(placeholder: tr("Projeto (opcional)", "Project (optional)"), value: lastProject)
         alert.accessoryView = projectField
@@ -381,11 +382,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         let response = alert.runModal()
         promptShowing = false
 
-        if response == .alertFirstButtonReturn {
+        switch response {
+        case .alertFirstButtonReturn:
             lastProject = projectField.stringValue
             startSession(title: detectedTitle, project: projectField.stringValue,
                          platform: "google-meet", failCode: code)
-        } else {
+        case .alertThirdButtonReturn:
+            // Snooze straight from the prompt: silence detection until the user
+            // wakes MeetMD, instead of re-prompting on the next detection poll.
+            toggleSleep()
+        default: // "Not now" — dismiss just this meeting
             dismissedCode = code
         }
     }
