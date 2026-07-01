@@ -374,6 +374,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: tr("Gravar", "Record"))
         alert.addButton(withTitle: tr("Agora não", "Not now"))
         alert.addButton(withTitle: tr("Dormir", "Snooze"))
+        // Draw the brand icon directly (like openAbout / promptStartInput) so it
+        // never falls back to NSApp.applicationIconImage, which shows a generic
+        // placeholder until the LaunchServices icon cache catches up after a rebuild.
+        alert.icon = ClaudeIcon.appIcon(px: 64)
 
         let projectField = textField(placeholder: tr("Projeto (opcional)", "Project (optional)"), value: lastProject)
         alert.accessoryView = projectField

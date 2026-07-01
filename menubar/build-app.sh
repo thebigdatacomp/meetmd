@@ -207,5 +207,11 @@ if [ -n "${RELEASE:-}" ]; then
 	echo "   .dmg → $DMG"
 fi
 
+# Refresh the LaunchServices icon cache for the rebuilt bundle. Without this, a
+# rebuild at the same path/bundle-id keeps the stale (often generic) icon in
+# NSApp.applicationIconImage and the Dock/switcher until macOS catches up.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+[ -x "$LSREGISTER" ] && "$LSREGISTER" -f "$APP" || true
+
 echo "OK → $APP"
 echo "   Dev: abra MeetMD.app. Release: RELEASE=1 NOTARY_PROFILE=meetmd-notary ./menubar/build-app.sh"
