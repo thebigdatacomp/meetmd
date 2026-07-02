@@ -37,7 +37,13 @@ echo "==> compilando menu-bar (Swift, arm64)"
 swiftc -O -target "$SWIFT_TARGET" "$ROOT/menubar/MeetMDBar.swift" -o "$MACOS/MeetMD" -framework Cocoa
 
 echo "==> compilando helper de áudio (Swift, arm64 / ScreenCaptureKit)"
-swiftc -O -target "$SWIFT_TARGET" "$ROOT/spike/macos-audio/SystemAudioRecorder.swift" -o "$MACOS/system-audio-recorder"
+# MMDObjC.m + bridging header give Swift an NSException catcher (Swift can't
+# catch NSException), so a mic AVFAudio exception can never crash the recorder.
+swiftc -O -target "$SWIFT_TARGET" \
+	"$ROOT/spike/macos-audio/SystemAudioRecorder.swift" \
+	"$ROOT/spike/macos-audio/MMDObjC.m" \
+	-import-objc-header "$ROOT/spike/macos-audio/MMDObjC-Bridging.h" \
+	-o "$MACOS/system-audio-recorder"
 
 echo "==> compilando bridge (Go, arm64)"
 # arm64 nativo (sem Rosetta), alinhado ao resto do bundle. Go >= 1.24 já emite

@@ -15,6 +15,8 @@ import Foundation
 import AVFoundation
 import CoreMedia
 import ScreenCaptureKit
+import CoreAudio
+import AudioToolbox
 
 // WAV output format: 16kHz mono, 16-bit PCM — exactly what whisper.cpp expects,
 // so the captured file feeds transcription with no resampling.
@@ -51,6 +53,21 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     // Observes AVAudioEngineConfigurationChange so the mic tap survives the engine
     // stopping mid-recording (device/route swap, the meeting app grabbing the mic).
     private var micConfigObserver: NSObjectProtocol?
+    // The mic can bind to a silent device with no error and no config change (seen
+    // with the built-in mic when the meeting app already holds it), recording
+    // nothing all meeting. These pin the mic to the live default input, follow
+    // default-input swaps, and watch for a dead mic while system audio flows. All
+    // tap installs are wrapped so an AVFAudio exception can never crash the process.
+    private var defaultInputListener: AudioObjectPropertyListenerBlock?
+    private var micWatchdog: DispatchSourceTimer?
+    private var lastSystemSamples: AVAudioFramePosition = 0
+    private var lastMicSamples: AVAudioFramePosition = 0
+    private var micSilentTicks = 0
+    private var rearming = false // guards re-entrant tap re-installs
+    private static let defaultInputAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain)
 
     // stopping guards the stream-death restart (so an intentional stop doesn't
     // trigger a restart); systemRestarts caps recovery attempts.
@@ -134,9 +151,9 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         // Without re-arming, the tap goes silent for the rest of the meeting
         // (observed: 3.5s of mic vs 58min of system audio). Re-install and restart.
         micConfigObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
-            guard let self = self, !self.stopping else { return }
+            guard let self = self, !self.stopping, !self.rearming else { return }
             do {
                 try self.installMicTap()
                 FileHandle.standardError.write("mic engine reconfigured — tap re-armed\n".data(using: .utf8)!)
@@ -144,6 +161,14 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 FileHandle.standardError.write("mic tap re-arm failed: \(error)\n".data(using: .utf8)!)
             }
         }
+
+        // AVAudioEngineConfigurationChange doesn't reliably fire when only the
+        // default *input* device swaps, so follow that directly and re-arm.
+        startDefaultInputListener()
+
+        // Watchdog for the silent-mic failure (see installMicTap). Needs system
+        // capture as a reference that audio is actually flowing.
+        if captureSystem { startMicWatchdog() }
     }
 
     // installMicTap (re)installs the tap on the current input and starts the
@@ -152,47 +177,162 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     // converter matches the new device. Writes continue to the same micFile.
     private func installMicTap() throws {
         guard let engine = engine, let file = micFile else { return }
+        rearming = true
+        defer { rearming = false }
+        // Stop before rebinding the HAL device so the change takes effect, then pin
+        // the engine's input to the *current* default input device. AVAudioEngine's
+        // implicit binding can silently latch a stale/silent device (seen with the
+        // built-in mic when the meeting app already held it).
+        if engine.isRunning { engine.stop() }
+        bindDefaultInputDevice(engine)
         let input = engine.inputNode
         input.removeTap(onBus: 0) // no-op if none; required before re-installing
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
-            // Input temporarily gone (no device). A later config change re-arms us.
+        // Is there a usable input device yet? (0ch/0Hz = none.)
+        let probe = input.outputFormat(forBus: 0)
+        guard probe.channelCount > 0, probe.sampleRate > 0 else {
+            // Input temporarily gone. A later config/device change re-arms us.
             throw RecorderError.micUnavailable
         }
         guard let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: Output.sampleRate,
                                          channels: Output.channels,
-                                         interleaved: false),
-              let converter = AVAudioConverter(from: inputFormat, to: target) else {
+                                         interleaved: false) else {
             throw RecorderError.micUnavailable
         }
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self = self, !self.paused else { return }
-            let ratio = target.sampleRate / inputFormat.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
-            guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-            var fed = false
-            var convError: NSError?
-            converter.convert(to: out, error: &convError) { _, status in
-                if fed { status.pointee = .noDataNow; return nil }
-                fed = true
-                status.pointee = .haveData
-                return buffer
-            }
-            if convError == nil, out.frameLength > 0 {
-                try? file.write(from: out)
-                self.micSamplesWritten += AVAudioFramePosition(out.frameLength)
+        // format: nil makes the tap use the node's *current* format at install
+        // time, so it can never mismatch (the crash we hit when the device/format
+        // was still settling after a rebind, e.g. the 96 kHz built-in mic). The
+        // converter is (re)built lazily from each buffer's real format. The whole
+        // install is wrapped so an AVFAudio NSException can't crash the recorder.
+        var converter: AVAudioConverter?
+        var converterInFormat: AVAudioFormat?
+        let installed = guarded("installTap") {
+            input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
+                guard let self = self, !self.paused else { return }
+                let inFormat = buffer.format
+                guard inFormat.sampleRate > 0, buffer.frameLength > 0 else { return }
+                if converterInFormat != inFormat {
+                    converter = AVAudioConverter(from: inFormat, to: target)
+                    converterInFormat = inFormat
+                }
+                guard let conv = converter else { return }
+                let ratio = target.sampleRate / inFormat.sampleRate
+                let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
+                guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
+                var fed = false
+                var convError: NSError?
+                conv.convert(to: out, error: &convError) { _, status in
+                    if fed { status.pointee = .noDataNow; return nil }
+                    fed = true
+                    status.pointee = .haveData
+                    return buffer
+                }
+                if convError == nil, out.frameLength > 0 {
+                    try? file.write(from: out)
+                    self.micSamplesWritten += AVAudioFramePosition(out.frameLength)
+                }
             }
         }
+        guard installed else { throw RecorderError.micUnavailable }
         engine.prepare()
         try engine.start()
+        micSilentTicks = 0 // give the fresh tap time before the watchdog judges it
+    }
+
+    // guarded runs an AVFAudio call that may throw an Objective-C NSException
+    // (which Swift can't catch), logging and swallowing it so a mic failure never
+    // terminates the process. Returns whether it completed without an exception.
+    @discardableResult
+    private func guarded(_ what: String, _ block: () -> Void) -> Bool {
+        var reason: NSString?
+        let ok = MMDRunCatchingExceptions(block, &reason)
+        if !ok {
+            FileHandle.standardError.write("mic \(what) exception: \(reason ?? "?")\n".data(using: .utf8)!)
+        }
+        return ok
+    }
+
+    // defaultInputDeviceID returns the system's current default input device.
+    private func defaultInputDeviceID() -> AudioDeviceID? {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = Self.defaultInputAddress
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID)
+        guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
+        return deviceID
+    }
+
+    // bindDefaultInputDevice pins the engine's input HAL unit to the current
+    // default input device instead of trusting AVAudioEngine's implicit binding.
+    @discardableResult
+    private func bindDefaultInputDevice(_ engine: AVAudioEngine) -> Bool {
+        guard let unit = engine.inputNode.audioUnit, var dev = defaultInputDeviceID() else { return false }
+        let status = AudioUnitSetProperty(
+            unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+            &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
+        return status == noErr
+    }
+
+    // startDefaultInputListener re-arms the tap when the default input changes
+    // mid-meeting (AirPods in/out, switching input in System Settings).
+    private func startDefaultInputListener() {
+        var addr = Self.defaultInputAddress
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self = self, !self.stopping, !self.rearming else { return }
+            do {
+                try self.installMicTap()
+                FileHandle.standardError.write("default input changed — mic rebound\n".data(using: .utf8)!)
+            } catch {
+                FileHandle.standardError.write("mic rebind failed: \(error)\n".data(using: .utf8)!)
+            }
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block)
+        if status == noErr { defaultInputListener = block }
+    }
+
+    // startMicWatchdog catches the silent-mic failure that has no error path: if
+    // system audio keeps flowing but the mic produces no samples for ~10s, the tap
+    // is bound to a dead device — force a rebind + re-arm.
+    private func startMicWatchdog() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler { [weak self] in
+            guard let self = self, !self.stopping, !self.paused, !self.rearming else { return }
+            let sys = self.samplesWritten
+            let mic = self.micSamplesWritten
+            let systemFlowing = sys > self.lastSystemSamples
+            let micFlowing = mic > self.lastMicSamples
+            self.lastSystemSamples = sys
+            self.lastMicSamples = mic
+            self.micSilentTicks = (systemFlowing && !micFlowing) ? self.micSilentTicks + 1 : 0
+            guard self.micSilentTicks >= 2 else { return } // ~10s of audio with a dead mic
+            self.micSilentTicks = 0
+            do {
+                try self.installMicTap()
+                FileHandle.standardError.write("mic silent while system active — tap re-armed\n".data(using: .utf8)!)
+            } catch {
+                FileHandle.standardError.write("mic watchdog re-arm failed: \(error)\n".data(using: .utf8)!)
+            }
+        }
+        timer.resume()
+        micWatchdog = timer
     }
 
     func stop() async throws {
         stopping = true
+        micWatchdog?.cancel()
+        micWatchdog = nil
         if let o = micConfigObserver {
             NotificationCenter.default.removeObserver(o)
             micConfigObserver = nil
+        }
+        if let block = defaultInputListener {
+            var addr = Self.defaultInputAddress
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block)
+            defaultInputListener = nil
         }
         try? await stream?.stopCapture() // a dead stream must NOT block finalization below
         stream = nil
