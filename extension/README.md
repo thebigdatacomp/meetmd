@@ -1,38 +1,38 @@
-# MeetMD — Extensão (Google Meet)
+# MeetMD — Extension (Google Meet)
 
-WebExtension (MV3) que detecta reuniões no Google Meet e dispara `start`/`stop` no [bridge local](../bridge). É um helper de detecção/UX — **não** captura áudio nem grava arquivos (isso é o bridge).
+WebExtension (MV3) that detects meetings in Google Meet and triggers `start`/`stop` on the [local bridge](../bridge). It's a detection/UX helper — it does **not** capture audio or record files (that's the bridge).
 
-## Componentes
+## Components
 
-| Arquivo | Papel |
+| File | Role |
 |---------|-------|
-| `manifest.json` | MV3; content script no Meet, service worker, popup, host permission pro bridge |
-| `lib/protocol.js` | Constantes compartilhadas (URL do bridge, plataforma, tipos de mensagem) |
-| `content/meet.js` | Detecta call ativa no Meet + scrape best-effort de título/participantes |
-| `background/service-worker.js` | Único que fala com o bridge; gerencia a sessão ativa |
-| `popup/` | Status do bridge + gravação, e controle manual (start/stop/cancel) |
+| `manifest.json` | MV3; content script on Meet, service worker, popup, host permission for the bridge |
+| `lib/protocol.js` | Shared constants (bridge URL, platform, message types) |
+| `content/meet.js` | Detects an active call on Meet + best-effort scrape of title/participants |
+| `background/service-worker.js` | The only one that talks to the bridge; manages the active session |
+| `popup/` | Bridge + recording status, and manual control (start/stop/cancel) |
 
-## Fluxo
+## Flow
 
 ```
 content/meet.js  --(MEETING_STARTED/ENDED)-->  service-worker  --HTTP-->  bridge (127.0.0.1:8765)
 popup            --(START/STOP/CANCEL/STATUS)-->
 ```
 
-O content script só observa o DOM e manda mensagens; o service worker (que tem `host_permissions` pro `127.0.0.1`) faz as chamadas HTTP. A sessão fica em `chrome.storage.local` porque o SW do MV3 é efêmero.
+The content script only observes the DOM and sends messages; the service worker (which has `host_permissions` for `127.0.0.1`) makes the HTTP calls. The session lives in `chrome.storage.local` because the MV3 SW is ephemeral.
 
-**Coexiste com o CLI:** a extensão e o CLI (`meetmd start/stop`) são clientes do mesmo bridge, que tem uma única sessão ativa. O popup lê o `/status` do bridge como verdade e reconcilia o estado local — então iniciar pelo CLI e parar pelo popup (ou vice-versa) funciona; o badge sincroniza ao abrir o popup.
+**Coexists with the CLI:** the extension and the CLI (`meetmd start/stop`) are clients of the same bridge, which has a single active session. The popup reads the bridge's `/status` as the source of truth and reconciles the local state — so starting via the CLI and stopping via the popup (or vice versa) works; the badge syncs when the popup opens.
 
-## Carregar (dev)
+## Load (dev)
 
-1. Suba o bridge: `cd ../bridge && make run`
-2. Chrome → `chrome://extensions` → ative **Developer mode** → **Load unpacked** → selecione esta pasta `extension/`.
-3. Entre num Google Meet: o badge fica 🔴 e a gravação inicia sozinha; ao sair, encerra e os `.md` aparecem no `output_root`.
-4. O popup mostra status do bridge e permite start/stop manual (inclusive fora do Meet).
+1. Start the bridge: `cd ../bridge && make run`
+2. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select this `extension/` folder.
+3. Join a Google Meet: the badge turns 🔴 and recording starts on its own; when you leave, it ends and the `.md` files appear in `output_root`.
+4. The popup shows the bridge status and allows manual start/stop (including outside of Meet).
 
-## Limitações conhecidas (MVP)
+## Known limitations (MVP)
 
-- **Scrape do Meet é frágil:** título vem do `document.title`; participantes são best-effort e podem vir vazios (o bridge grava mesmo assim). Seletores isolados em `content/meet.js`.
-- Detecção por aria-label de "Leave call" (en/pt). UI nova do Meet pode exigir ajuste dos seletores.
-- Só Google Meet. Zoom/Teams fora do escopo do MVP.
-- Sem ícones próprios ainda (usa o default do Chrome).
+- **Meet scrape is fragile:** the title comes from `document.title`; participants are best-effort and may come back empty (the bridge records anyway). Selectors are isolated in `content/meet.js`.
+- Detection via the "Leave call" aria-label (en/pt). A new Meet UI may require adjusting the selectors.
+- Google Meet only. Zoom/Teams are out of scope for the MVP.
+- No custom icons yet (uses the Chrome default).

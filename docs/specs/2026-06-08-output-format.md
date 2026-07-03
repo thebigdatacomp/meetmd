@@ -1,41 +1,41 @@
-# MeetMD — Spec do Formato de Output
+# MeetMD — Output Format Spec
 
-- **Data:** 2026-06-08
-- **Status:** Implementado
-- **Autor:** Robson Müller
+- **Date:** 2026-06-08
+- **Status:** Implemented
+- **Author:** Robson Müller
 
-> Implementado conforme a spec, com duas adições: roteamento **por projeto**
-> (`output_root/<projeto>/…`) e o campo `project` no frontmatter de `meeting.md`.
-> Os falantes hoje são `Você` (mic) e `Participantes` (sistema) — diarização por
-> pessoa é futura (#5).
+> Implemented as specified, with two additions: routing **per project**
+> (`output_root/<project>/…`) and the `project` field in the `meeting.md` frontmatter.
+> Speakers today are `You` (mic) and `Participants` (system) — per-person diarization
+> is future work (#5).
 
-Define a estrutura de arquivos `.md` que o MeetMD grava — o **produto principal** da ferramenta. O formato é otimizado para um LLM (Claude) ler e processar: frontmatter estável, seções previsíveis, links relativos.
+Defines the structure of the `.md` files that MeetMD writes — the tool's **main product**. The format is optimized for an LLM (Claude) to read and process: stable frontmatter, predictable sections, relative links.
 
-## 1. Estrutura de diretórios
+## 1. Directory structure
 
 ```
 <output_root>/
 ├── INDEX.md
-├── 2026-06-08-1430-planejamento-sprint-7/
-│   ├── meeting.md        # metadados + visão geral (gerado)
-│   ├── transcript.md     # transcrição completa (gerado)
-│   ├── summary.md        # TEMPLATE vazio — Claude preenche
-│   └── actions.md        # TEMPLATE vazio — Claude preenche
-└── 2026-06-08-1600-call-cliente-x/
+├── 2026-06-08-1430-sprint-planning-7/
+│   ├── meeting.md        # metadata + overview (generated)
+│   ├── transcript.md     # full transcript (generated)
+│   ├── summary.md        # empty TEMPLATE — Claude fills it in
+│   └── actions.md        # empty TEMPLATE — Claude fills it in
+└── 2026-06-08-1600-client-x-call/
     └── ...
 ```
 
-- **Nome da pasta:** `YYYY-MM-DD-hhmm-<slug-do-titulo>`. Ordenável cronologicamente, único, legível.
-- **`slug`:** título em minúsculas, sem acento, espaços → `-`. Sem título → `reuniao`.
+- **Folder name:** `YYYY-MM-DD-hhmm-<title-slug>`. Chronologically sortable, unique, readable.
+- **`slug`:** title in lowercase, without accents, spaces → `-`. No title → `reuniao`.
 
-## 2. Convenção de frontmatter
+## 2. Frontmatter convention
 
-Todos os arquivos compartilham um bloco de identidade no frontmatter YAML:
+All files share an identity block in the YAML frontmatter:
 
 ```yaml
 ---
-id: 2026-06-08-1430-planejamento-sprint-7
-title: Planejamento Sprint 7
+id: 2026-06-08-1430-sprint-planning-7
+title: Sprint Planning 7
 date: 2026-06-08
 start: "14:30"
 end: "15:12"
@@ -49,16 +49,16 @@ source: meetmd
 ---
 ```
 
-Campos derivados (`duration_min`) calculados pelo bridge. `participants` vem do scrape do Meet; vazio se indisponível.
+Derived fields (`duration_min`) are computed by the bridge. `participants` comes from scraping Meet; empty if unavailable.
 
 ## 3. `meeting.md`
 
-Porta de entrada da reunião. Frontmatter completo + visão geral + links para os outros arquivos.
+The meeting's entry point. Full frontmatter + overview + links to the other files.
 
 ```markdown
 ---
-id: 2026-06-08-1430-planejamento-sprint-7
-title: Planejamento Sprint 7
+id: 2026-06-08-1430-sprint-planning-7
+title: Sprint Planning 7
 date: 2026-06-08
 start: "14:30"
 end: "15:12"
@@ -69,103 +69,103 @@ source: meetmd
 status: raw            # raw | summarized
 ---
 
-# Planejamento Sprint 7
+# Sprint Planning 7
 
-> Reunião capturada por MeetMD em 2026-06-08 14:30 (42 min).
+> Meeting captured by MeetMD on 2026-06-08 14:30 (42 min).
 
-## Arquivos
-- [Transcrição completa](transcript.md)
-- [Resumo](summary.md) — _a preencher_
-- [Ações](actions.md) — _a preencher_
+## Files
+- [Full transcript](transcript.md)
+- [Summary](summary.md) — _to be filled in_
+- [Actions](actions.md) — _to be filled in_
 
-## Participantes
+## Participants
 - Robson Müller
 - Alessandro
 - Leonardo
 ```
 
-O campo `status` permite ao Claude saber se o resumo já foi gerado (`raw` → ainda não).
+The `status` field lets Claude know whether the summary has already been generated (`raw` → not yet).
 
 ## 4. `transcript.md`
 
-Transcrição completa com timestamps e rótulo mínimo de falante (`Você` vs `Participantes`, da separação de 2 canais — ver spec de arquitetura §3.2).
+Full transcript with timestamps and a minimal speaker label (`You` vs `Participants`, from the 2-channel separation — see architecture spec §3.2).
 
 ```markdown
 ---
-id: 2026-06-08-1430-planejamento-sprint-7
-title: Planejamento Sprint 7
+id: 2026-06-08-1430-sprint-planning-7
+title: Sprint Planning 7
 date: 2026-06-08
 source: meetmd
 kind: transcript
 ---
 
-# Transcrição — Planejamento Sprint 7
+# Transcript — Sprint Planning 7
 
-[00:00:04] Participantes: Bom, vamos começar pelo board do sprint.
-[00:00:11] Você: Beleza. A issue 70 já fechou, então sobra...
-[00:01:23] Participantes: Sobre o deploy, acho melhor segurar até sexta.
+[00:00:04] Participants: Alright, let's start with the sprint board.
+[00:00:11] You: Sounds good. Issue 70 is already closed, so what's left...
+[00:01:23] Participants: About the deploy, I think we should hold off until Friday.
 ...
 ```
 
-- Timestamps `[hh:mm:ss]` relativos ao início da reunião.
-- Rótulo de falante limitado a `Você` / `Participantes` no MVP (sem diarização por pessoa).
-- Texto cru do Whisper, sem edição.
+- Timestamps `[hh:mm:ss]` relative to the meeting's start.
+- Speaker label limited to `You` / `Participants` in the MVP (no per-person diarization).
+- Raw Whisper text, unedited.
 
-## 5. `summary.md` (template a preencher)
+## 5. `summary.md` (template to be filled in)
 
-Gerado **vazio**, com seções e instrução para o Claude. A ferramenta não chama LLM (decisão: transcript + estrutura pré-pronta).
+Generated **empty**, with sections and instructions for Claude. The tool does not call an LLM (decision: transcript + ready-made structure).
 
 ```markdown
 ---
-id: 2026-06-08-1430-planejamento-sprint-7
-title: Planejamento Sprint 7
+id: 2026-06-08-1430-sprint-planning-7
+title: Sprint Planning 7
 date: 2026-06-08
 source: meetmd
 kind: summary
 status: empty          # empty | filled
 ---
 
-# Resumo — Planejamento Sprint 7
+# Summary — Sprint Planning 7
 
-<!-- MeetMD: preencha a partir de transcript.md. Remova este comentário ao concluir. -->
+<!-- MeetMD: fill in from transcript.md. Remove this comment when done. -->
 
 ## TL;DR
-_(2-3 frases)_
+_(2-3 sentences)_
 
-## Tópicos discutidos
+## Topics discussed
 -
 
-## Decisões
+## Decisions
 -
 
-## Pontos em aberto
+## Open questions
 -
 ```
 
-## 6. `actions.md` (template a preencher)
+## 6. `actions.md` (template to be filled in)
 
 ```markdown
 ---
-id: 2026-06-08-1430-planejamento-sprint-7
-title: Planejamento Sprint 7
+id: 2026-06-08-1430-sprint-planning-7
+title: Sprint Planning 7
 date: 2026-06-08
 source: meetmd
 kind: actions
 status: empty
 ---
 
-# Ações — Planejamento Sprint 7
+# Actions — Sprint Planning 7
 
-<!-- MeetMD: extraia itens de ação de transcript.md. Um por linha. -->
+<!-- MeetMD: extract action items from transcript.md. One per line. -->
 
-| # | Ação | Responsável | Prazo | Status |
-|---|------|-------------|-------|--------|
-|   |      |             |       | aberto |
+| # | Action | Owner | Due | Status |
+|---|--------|-------|-----|--------|
+|   |        |       |     | open   |
 ```
 
-## 7. `INDEX.md` (raiz)
+## 7. `INDEX.md` (root)
 
-Mantido pelo bridge a cada nova reunião. Tabela mais recente no topo.
+Maintained by the bridge on every new meeting. Most recent table row at the top.
 
 ```markdown
 ---
@@ -174,28 +174,28 @@ kind: index
 updated: 2026-06-08
 ---
 
-# Reuniões — MeetMD
+# Meetings — MeetMD
 
-| Data | Reunião | Duração | Plataforma | Status |
-|------|---------|---------|------------|--------|
-| 2026-06-08 14:30 | [Planejamento Sprint 7](2026-06-08-1430-planejamento-sprint-7/meeting.md) | 42 min | Google Meet | raw |
-| 2026-06-08 16:00 | [Call cliente X](2026-06-08-1600-call-cliente-x/meeting.md) | 28 min | Google Meet | raw |
+| Date | Meeting | Duration | Platform | Status |
+|------|---------|----------|----------|--------|
+| 2026-06-08 14:30 | [Sprint Planning 7](2026-06-08-1430-sprint-planning-7/meeting.md) | 42 min | Google Meet | raw |
+| 2026-06-08 16:00 | [Client X call](2026-06-08-1600-client-x-call/meeting.md) | 28 min | Google Meet | raw |
 ```
 
-## 8. Contrato de uso pelo Claude
+## 8. Usage contract with Claude
 
-O fluxo pretendido: o usuário aponta o Claude para `<output_root>` e pede, por exemplo, _"resuma a última reunião"_. O Claude:
+The intended flow: the user points Claude at `<output_root>` and asks, for example, _"summarize the last meeting"_. Claude:
 
-1. Lê `INDEX.md` → acha a reunião mais recente.
-2. Abre `meeting.md` (contexto) e `transcript.md` (conteúdo).
-3. Preenche `summary.md` e `actions.md`, troca `status: empty → filled`.
-4. Atualiza `status: raw → summarized` em `meeting.md` e no `INDEX.md`.
+1. Reads `INDEX.md` → finds the most recent meeting.
+2. Opens `meeting.md` (context) and `transcript.md` (content).
+3. Fills in `summary.md` and `actions.md`, switches `status: empty → filled`.
+4. Updates `status: raw → summarized` in `meeting.md` and in `INDEX.md`.
 
-O formato é estável e previsível justamente para que esse contrato funcione sem ambiguidade.
+The format is stable and predictable precisely so that this contract works without ambiguity.
 
-## 9. Decisões de formato
+## 9. Format decisions
 
-- **Markdown + frontmatter YAML:** legível por humano e trivial de parsear por LLM.
-- **Arquivos separados** (transcript / summary / actions) em vez de um só: o Claude pode reescrever `summary.md` sem tocar no transcript cru, e o transcript pode ser grande.
-- **Templates com comentário-instrução (`<!-- MeetMD: ... -->`):** guiam o LLM e são removíveis, sem poluir o doc final.
-- **Campos `status`:** tornam o pipeline idempotente — dá pra saber o que já foi processado.
+- **Markdown + YAML frontmatter:** human-readable and trivial for an LLM to parse.
+- **Separate files** (transcript / summary / actions) instead of a single one: Claude can rewrite `summary.md` without touching the raw transcript, and the transcript can be large.
+- **Templates with instruction-comments (`<!-- MeetMD: ... -->`):** they guide the LLM and are removable, without polluting the final doc.
+- **`status` fields:** they make the pipeline idempotent — you can tell what has already been processed.
