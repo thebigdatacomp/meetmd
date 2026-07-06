@@ -69,7 +69,7 @@ jobs:
         working-directory: bridge
         run: go test ./...
       - name: Compile audio helper (ScreenCaptureKit)
-        run: swiftc -O spike/macos-audio/SystemAudioRecorder.swift spike/macos-audio/MMDObjC.m -import-objc-header spike/macos-audio/MMDObjC-Bridging.h -o /tmp/system-audio-recorder
+        run: swiftc -O spike/macos-audio/SystemAudioRecorder.swift -o /tmp/system-audio-recorder
       - name: Compile menu-bar app
         run: swiftc -O menubar/MeetMDBar.swift -framework Cocoa -o /tmp/meetmd-bar
 
