@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -467,6 +468,15 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 	var segments []model.Segment
 	for i, segs := range results {
 		if errs[i] != nil {
+			// The mic is a secondary channel — a failure (e.g. the mic never
+			// initialised, leaving an empty WAV that whisper can't read) must not
+			// sink the whole meeting. Log it and keep the system transcript; only
+			// a system-channel failure is fatal (→ recovery), since that IS the
+			// meeting (all the participants you heard).
+			if channels[i].voice {
+				log.Printf("mic channel transcription failed, saving meeting without it: %v", errs[i])
+				continue
+			}
 			return nil, errs[i]
 		}
 		segments = append(segments, segs...)
