@@ -10,7 +10,7 @@ APP="$ROOT/menubar/MeetMD.app"
 MACOS="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
 BUNDLE_ID="com.tbdc.meetmd"
-VERSION="0.2.0"
+VERSION="0.2.1"
 
 # whisper.cpp source + models (instalados no pré-requisito do README)
 WHISPER_SRC="${WHISPER_SRC:-$HOME/.meetmd/tools/whisper.cpp}"
