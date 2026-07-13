@@ -73,6 +73,8 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
                                           sampleRate: Output.sampleRate,
                                           channels: Output.channels, interleaved: false)!
     private var micSource = "none" // screencapturekit | avcapture | none
+    private var micDestURL: URL?   // where the mic is being written, if at all
+    private var micFallbackObserver: NSObjectProtocol?
 
     // Watchdog: purely diagnostic. It only reports "the system is producing audio
     // but the mic has produced none" — it never re-arms anything (a re-arm loop is
@@ -116,25 +118,32 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
 
         // The mic WAV must exist before the stream starts: ScreenCaptureKit can
         // deliver mic buffers the moment capture begins.
-        let micDest: URL? = captureSystem ? micURL : outputURL
-        if let dest = micDest {
+        micDestURL = captureSystem ? micURL : outputURL
+        if let dest = micDestURL {
             micFile = try AVAudioFile(forWriting: dest, settings: Output.settings)
             if let device = AVCaptureDevice.default(for: .audio) {
-                log("mic: input padrão = \(device.localizedName)")
+                log("mic: default input = \(device.localizedName)")
             } else {
-                log("mic: nenhum input de áudio padrão encontrado")
+                log("mic: no default audio input found")
             }
         }
 
         if captureSystem {
-            try await startSystem() // may enable the mic on the same stream
+            do {
+                try await startSystem() // may enable the mic on the same stream
+            } catch {
+                // Don't leave a 0-frame mic WAV behind: it is exactly the input that
+                // later makes whisper fail and reads as "the mic broke".
+                discardMicFile()
+                throw error
+            }
             // Only fall back if ScreenCaptureKit did not take the mic, so we never
             // capture it twice.
-            if micDest != nil, micSource == "none" {
+            if micDestURL != nil, micSource == "none" {
                 do {
                     try startMicFallback()
                 } catch {
-                    log("mic: fallback AVCaptureSession indisponível: \(error)")
+                    log("mic: AVCaptureSession fallback unavailable: \(error)")
                 }
             }
             startMicWatchdog()
@@ -142,7 +151,16 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
             // Mic-only: the mic IS the recording, so a failure here is fatal.
             try startMicFallback()
         }
-        log("mic: fonte=\(micSource)")
+    }
+
+    // discardMicFile drops the mic WAV we pre-created when the recording never
+    // actually started, so nothing downstream trips over an empty file.
+    private func discardMicFile() {
+        micFile = nil
+        if let dest = micDestURL {
+            try? FileManager.default.removeItem(at: dest)
+            micDestURL = nil
+        }
     }
 
     private func startSystem() async throws {
@@ -157,13 +175,21 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         if micFile != nil, #available(macOS 15.0, *) {
             do {
                 try await startStream(filter: filter, withMic: true)
+                // A stream restart can land here while the AVCaptureSession fallback
+                // from an earlier attempt is still running — both paths would then
+                // write the same mic WAV, interleaving two copies of the audio.
+                // ScreenCaptureKit wins; tear the fallback down.
+                if micSession != nil {
+                    log("mic: stopping the AVCaptureSession fallback — ScreenCaptureKit took the mic")
+                }
+                stopMicFallback()
                 micSource = "screencapturekit"
-                log("mic: capturando via ScreenCaptureKit (mesmo stream do áudio do sistema)")
+                log("mic: capturing via ScreenCaptureKit (same stream as the system audio)")
                 return
             } catch {
                 // A mic problem must never cost us the meeting: drop the mic from the
                 // stream and bring the system audio up regardless.
-                log("mic: SCK captureMicrophone falhou (\(error)) — reiniciando o stream SEM mic")
+                log("mic: SCK captureMicrophone failed (\(error)) — restarting the stream WITHOUT the mic")
             }
         }
         try await startStream(filter: filter, withMic: false)
@@ -210,17 +236,29 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
 
         // This session used to die at runtime with nobody watching — that is exactly
         // how the mic failed silently. Observe it.
-        NotificationCenter.default.addObserver(
+        micFallbackObserver = NotificationCenter.default.addObserver(
             forName: .AVCaptureSessionRuntimeError, object: session, queue: nil
         ) { note in
-            let err = note.userInfo?[AVCaptureSessionErrorKey] ?? "desconhecido"
+            let err = note.userInfo?[AVCaptureSessionErrorKey] ?? "unknown"
             log("mic: AVCaptureSession runtime error: \(err)")
         }
 
         session.startRunning()
         self.micSession = session
         micSource = "avcapture"
-        log("mic: capturando via AVCaptureSession (fallback) — device=\(device.localizedName)")
+        log("mic: capturing via AVCaptureSession (fallback) — device=\(device.localizedName)")
+    }
+
+    // stopMicFallback tears the AVCaptureSession path down, observer included.
+    // stopRunning() blocks until in-flight capture callbacks drain, so no buffer can
+    // still be on its way to writeMic afterwards.
+    private func stopMicFallback() {
+        if let observer = micFallbackObserver {
+            NotificationCenter.default.removeObserver(observer)
+            micFallbackObserver = nil
+        }
+        micSession?.stopRunning()
+        micSession = nil
     }
 
     // writeMic converts a mic buffer (device format) to 16kHz mono and appends it.
@@ -231,7 +269,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         if micConverterFormat != inFormat {
             micConverter = AVAudioConverter(from: inFormat, to: micTarget)
             micConverterFormat = inFormat
-            log("mic: formato de entrada \(Int(inFormat.sampleRate))Hz \(inFormat.channelCount)ch")
+            log("mic: input format \(Int(inFormat.sampleRate))Hz \(inFormat.channelCount)ch")
         }
         guard let converter = micConverter else { return }
         let ratio = micTarget.sampleRate / inFormat.sampleRate
@@ -272,8 +310,8 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
             self.micSilentTicks = (systemFlowing && !micFlowing) ? self.micSilentTicks + 1 : 0
             if self.micSilentTicks >= 2 { // ~20s of system audio with a dead mic
                 self.micWarned = true
-                log("mic: AVISO — o áudio do sistema está fluindo mas o mic não gravou " +
-                    "nenhum sample em ~20s (fonte=\(self.micSource))")
+                log("mic: WARNING — system audio is flowing but the mic has produced " +
+                    "no samples in ~20s (source=\(self.micSource))")
             }
         }
         timer.resume()
@@ -284,10 +322,9 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         stopping = true
         micWatchdog?.cancel()
         micWatchdog = nil
-        // stopRunning() blocks until in-flight capture callbacks drain, so it is
-        // safe to release micFile right after (no callback races on it).
-        micSession?.stopRunning()
-        micSession = nil
+        // Both mic paths must be down before micFile is released below, so no
+        // callback can still be writing to it.
+        stopMicFallback()
         try? await stream?.stopCapture() // a dead stream must NOT block finalization below
         stream = nil
         // Closing the AVAudioFiles flushes their WAV headers. This MUST run even if
@@ -299,11 +336,14 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         // Never fail silently: say exactly what each channel captured.
         let systemSeconds = Double(samplesWritten) / Output.sampleRate
         let micSeconds = Double(micSamplesWritten) / Output.sampleRate
-        log(String(format: "resumo: sistema=%.1fs mic=%.1fs (fonte=%@)",
+        log(String(format: "summary: system=%.1fs mic=%.1fs (source=%@)",
                    systemSeconds, micSeconds, micSource))
-        if micURL != nil, micSamplesWritten == 0 {
-            log("mic: FALHOU — 0 samples capturados (fonte=\(micSource)). " +
-                "A reunião foi salva apenas com o áudio dos participantes.")
+        // Keyed on micDestURL, not micURL: in mic-only mode (a voice note) micURL is
+        // nil and the mic writes to outputURL — the one mode where the mic IS the
+        // whole recording must not be the one mode that stays quiet about failing.
+        if micDestURL != nil, micSamplesWritten == 0 {
+            log("mic: FAILED — captured 0 samples (source=\(micSource)). " +
+                "The recording was saved with the system audio only.")
         }
 
         if let a = activity {

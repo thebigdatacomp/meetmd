@@ -490,6 +490,15 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 		}
 		segments = append(segments, segs...)
 	}
+	// A transcription error only catches a mic WAV whisper cannot read (an empty
+	// file). A mic that broke while still emitting digital silence transcribes
+	// fine — into zero segments — and would slip through as "the user was quiet".
+	// Ask the audio itself whether anything was ever captured.
+	if rec.MicWav != "" && !micFailed && !transcribe.HasAudio(rec.MicWav) {
+		micFailed = true
+		log.Printf("mic channel captured no audio (silent WAV), flagging the meeting")
+	}
+
 	sort.SliceStable(segments, func(i, j int) bool {
 		return segments[i].Start < segments[j].Start
 	})

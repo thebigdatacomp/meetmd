@@ -57,6 +57,22 @@ func tone(n int, amp int16) []int16 {
 	return s
 }
 
+// A mic that broke but kept emitting buffers writes digital silence, which whisper
+// transcribes into zero segments — indistinguishable from a quiet user unless we
+// ask the audio itself. HasAudio is what makes that call.
+func TestHasAudio(t *testing.T) {
+	rate := 16000
+	if !HasAudio(writeWAV(t, tone(rate, 800))) { // quiet, but a real noise floor
+		t.Error("HasAudio = false for a quiet-but-real recording; the mic worked")
+	}
+	if HasAudio(writeWAV(t, tone(rate, 0))) { // a broken mic: exact zeroes
+		t.Error("HasAudio = true for a digitally silent WAV; the mic captured nothing")
+	}
+	if HasAudio(filepath.Join(t.TempDir(), "missing.wav")) {
+		t.Error("HasAudio = true for an unreadable file")
+	}
+}
+
 func TestDropSilent(t *testing.T) {
 	const rate = 16000
 	// [0,1s] loud, [1,2s] near-silent, [2,3s] loud.

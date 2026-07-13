@@ -87,3 +87,23 @@ func windowRMS(samples []int16, rate int, from, to time.Duration) float64 {
 	}
 	return math.Sqrt(sum / float64(i1-i0))
 }
+
+// HasAudio reports whether a WAV holds any non-silent sample.
+//
+// It exists to tell "the mic captured nothing" from "the user simply didn't
+// speak" — a distinction a transcription error cannot make. A mic that broke but
+// still emitted buffers writes digital silence (exact zeroes), and whisper
+// transcribes that happily into zero segments; a working mic always carries a
+// noise floor. Unreadable or empty files count as no audio.
+func HasAudio(path string) bool {
+	samples, _, err := loadPCM16(path)
+	if err != nil {
+		return false
+	}
+	for _, s := range samples {
+		if s != 0 {
+			return true
+		}
+	}
+	return false
+}
