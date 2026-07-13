@@ -53,6 +53,10 @@ type Meeting struct {
 	Participants []string
 	StartedAt    time.Time
 	EndedAt      time.Time
+	// MicMissing marks a meeting whose mic channel captured nothing. The meeting is
+	// still saved (the participants' audio is the meeting), but the user must be
+	// told in the output — a silently missing voice is only discovered days later.
+	MicMissing bool
 }
 
 // DurationMin returns the meeting length in whole minutes (0 if not ended).

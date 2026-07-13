@@ -1,15 +1,25 @@
-// MeetMD — M1 spike: capture system audio (all meeting participants) on macOS
-// using ScreenCaptureKit, with no virtual audio device required.
+// MeetMD — macOS audio capture helper.
 //
-// This proves the riskiest architectural assumption: that we can record the
-// mixed system output (everyone you hear) browser-agnostically. It records to a
-// WAV for N seconds, then exits.
+// Captures the system audio (every meeting participant you hear) with
+// ScreenCaptureKit, and the microphone (your own voice) on the SAME stream via
+// ScreenCaptureKit's microphone capture (macOS 15+).
+//
+// Why the mic rides the SCStream: it is the one transport that has never failed
+// here. Two previous mic paths broke, both silently:
+//   - AVAudioEngine.inputNode → silent, or -10868 "format not supported" once a
+//     meeting app (a browser in a call) already held the built-in mic.
+//   - AVCaptureSession        → started fine, delivered zero samples in a real
+//     meeting, with no error to observe.
+// ScreenCaptureKit's own mic capture is Apple's first-class API for exactly this
+// (a meeting recorder capturing system + mic), so it shares one stream, one
+// permission model, one failure domain. AVCaptureSession is kept only as the
+// fallback for macOS 13/14 (and for mic-only voice notes, which start no stream).
+//
+// A mic problem must NEVER cost us the system audio: if the stream refuses to
+// start with mic capture on, it is restarted without it.
 //
 // Build:  swiftc -O SystemAudioRecorder.swift -o system-audio-recorder
-// Run:    ./system-audio-recorder out.wav 8
-//
-// NOTE: the first run prompts for Screen Recording permission (TCC). Grant it in
-// System Settings ▸ Privacy & Security ▸ Screen Recording, then re-run.
+// Run:    ./system-audio-recorder out.wav 8 --mic mic.wav
 
 import Foundation
 import AVFoundation
@@ -32,6 +42,12 @@ private enum Output {
     ]
 }
 
+// Every diagnostic goes to stderr, which the Go bridge captures into bridge.log.
+// The mic has failed three times with nothing to look at; that ends here.
+private func log(_ message: String) {
+    FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
+}
+
 @available(macOS 13.0, *)
 final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
                                  AVCaptureAudioDataOutputSampleBufferDelegate {
@@ -45,13 +61,9 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private var audioFile: AVAudioFile?
     private var samplesWritten: AVAudioFramePosition = 0
 
-    // Mic capture (the user's own voice, which never reaches system output).
-    // Captured with AVCaptureSession, NOT AVAudioEngine.inputNode: only capture can
-    // share the built-in mic with the meeting app (a browser in a call). The engine
-    // path failed there — silent, or error -10868 "format not supported" when the
-    // browser already held the mic — which is why AirPods worked but the built-in
-    // mic didn't. AVCaptureSession opens the device non-exclusively.
-    private var micSession: AVCaptureSession?
+    // Mic. Primary path is ScreenCaptureKit (see file header); AVCaptureSession is
+    // the fallback. micSource records which one is live, so the logs say so.
+    private var micSession: AVCaptureSession? // fallback only
     private var micFile: AVAudioFile?
     private var micSamplesWritten: AVAudioFramePosition = 0
     private var micConverter: AVAudioConverter?
@@ -60,20 +72,30 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private let micTarget = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                           sampleRate: Output.sampleRate,
                                           channels: Output.channels, interleaved: false)!
+    private var micSource = "none" // screencapturekit | avcapture | none
+
+    // Watchdog: purely diagnostic. It only reports "the system is producing audio
+    // but the mic has produced none" — it never re-arms anything (a re-arm loop is
+    // what crashed the recorder before and cost a whole meeting).
+    private var micWatchdog: DispatchSourceTimer?
+    private var lastSystemSamples: AVAudioFramePosition = 0
+    private var lastMicSamples: AVAudioFramePosition = 0
+    private var micSilentTicks = 0
+    private var micWarned = false
 
     // stopping guards the stream-death restart (so an intentional stop doesn't
     // trigger a restart); systemRestarts caps recovery attempts.
     private var stopping = false
     private var systemRestarts = 0
 
-    // paused is read on the audio queue and written from signal handlers, so it
-    // is guarded by a lock. While paused, samples are dropped, which keeps the
-    // recording continuous (no gap) across pause/resume.
     // While recording we hold a power-management activity so the display/system
     // don't sleep — display sleep invalidates the SCStream and kills the system
     // capture mid-meeting.
     private var activity: NSObjectProtocol?
 
+    // paused is read on the audio queues and written from signal handlers, so it
+    // is guarded by a lock. While paused, samples are dropped, which keeps the
+    // recording continuous (no gap) across pause/resume.
     private let lock = NSLock()
     private var pausedFlag = false
     var paused: Bool {
@@ -91,18 +113,36 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.idleDisplaySleepDisabled, .idleSystemSleepDisabled],
             reason: "MeetMD recording")
-        if captureSystem {
-            try await startSystem()
-            // Mic failure (e.g. no permission) must not abort the system capture.
-            do {
-                try startMic(to: micURL)
-            } catch {
-                FileHandle.standardError.write("mic indisponível: \(error)\n".data(using: .utf8)!)
+
+        // The mic WAV must exist before the stream starts: ScreenCaptureKit can
+        // deliver mic buffers the moment capture begins.
+        let micDest: URL? = captureSystem ? micURL : outputURL
+        if let dest = micDest {
+            micFile = try AVAudioFile(forWriting: dest, settings: Output.settings)
+            if let device = AVCaptureDevice.default(for: .audio) {
+                log("mic: input padrão = \(device.localizedName)")
+            } else {
+                log("mic: nenhum input de áudio padrão encontrado")
             }
+        }
+
+        if captureSystem {
+            try await startSystem() // may enable the mic on the same stream
+            // Only fall back if ScreenCaptureKit did not take the mic, so we never
+            // capture it twice.
+            if micDest != nil, micSource == "none" {
+                do {
+                    try startMicFallback()
+                } catch {
+                    log("mic: fallback AVCaptureSession indisponível: \(error)")
+                }
+            }
+            startMicWatchdog()
         } else {
             // Mic-only: the mic IS the recording, so a failure here is fatal.
-            try startMic(to: outputURL)
+            try startMicFallback()
         }
+        log("mic: fonte=\(micSource)")
     }
 
     private func startSystem() async throws {
@@ -114,6 +154,22 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         }
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
 
+        if micFile != nil, #available(macOS 15.0, *) {
+            do {
+                try await startStream(filter: filter, withMic: true)
+                micSource = "screencapturekit"
+                log("mic: capturando via ScreenCaptureKit (mesmo stream do áudio do sistema)")
+                return
+            } catch {
+                // A mic problem must never cost us the meeting: drop the mic from the
+                // stream and bring the system audio up regardless.
+                log("mic: SCK captureMicrophone falhou (\(error)) — reiniciando o stream SEM mic")
+            }
+        }
+        try await startStream(filter: filter, withMic: false)
+    }
+
+    private func startStream(filter: SCContentFilter, withMic: Bool) async throws {
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.sampleRate = Int(Output.sampleRate)
@@ -122,21 +178,23 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         // Minimal video — SCStream still produces frames, but we ignore them.
         config.width = 100
         config.height = 100
+        if withMic, #available(macOS 15.0, *) {
+            config.captureMicrophone = true
+        }
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
+        if withMic, #available(macOS 15.0, *) {
+            try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: micQueue)
+        }
         try await stream.startCapture()
         self.stream = stream
     }
 
-    // startMic captures the default audio input via AVCaptureSession and writes it,
-    // converted to 16kHz mono, to `dest`. AVCaptureSession opens the device
-    // non-exclusively, so it captures the built-in mic even while the meeting app
-    // (a browser in a call) already holds it — where AVAudioEngine.inputNode failed.
-    private func startMic(to dest: URL?) throws {
-        guard let micURL = dest else { return }
-        self.micFile = try AVAudioFile(forWriting: micURL, settings: Output.settings)
-
+    // startMicFallback captures the default input with AVCaptureSession. Used on
+    // macOS 13/14, for mic-only voice notes, and if the SCK mic refuses to start.
+    private func startMicFallback() throws {
+        guard micFile != nil else { return }
         guard let device = AVCaptureDevice.default(for: .audio) else {
             throw RecorderError.micUnavailable
         }
@@ -150,23 +208,30 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         guard session.canAddOutput(output) else { throw RecorderError.micUnavailable }
         session.addOutput(output)
 
+        // This session used to die at runtime with nobody watching — that is exactly
+        // how the mic failed silently. Observe it.
+        NotificationCenter.default.addObserver(
+            forName: .AVCaptureSessionRuntimeError, object: session, queue: nil
+        ) { note in
+            let err = note.userInfo?[AVCaptureSessionErrorKey] ?? "desconhecido"
+            log("mic: AVCaptureSession runtime error: \(err)")
+        }
+
         session.startRunning()
         self.micSession = session
+        micSource = "avcapture"
+        log("mic: capturando via AVCaptureSession (fallback) — device=\(device.localizedName)")
     }
 
-    // AVCaptureAudioDataOutput delivers mic buffers in the device's native format;
-    // convert each to 16kHz mono (rebuilding the converter lazily if the format
-    // changes, e.g. an AirPods ↔ built-in swap) and append to the mic WAV. Runs
-    // serially on micQueue.
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
-                       from connection: AVCaptureConnection) {
-        guard !paused, sampleBuffer.isValid, let file = micFile,
-              let pcm = sampleBuffer.toPCMBuffer(),
-              pcm.frameLength > 0, pcm.format.sampleRate > 0 else { return }
+    // writeMic converts a mic buffer (device format) to 16kHz mono and appends it.
+    // Shared by both mic paths; always runs on micQueue, so it is serial.
+    private func writeMic(_ pcm: AVAudioPCMBuffer) {
+        guard let file = micFile, pcm.frameLength > 0, pcm.format.sampleRate > 0 else { return }
         let inFormat = pcm.format
         if micConverterFormat != inFormat {
             micConverter = AVAudioConverter(from: inFormat, to: micTarget)
             micConverterFormat = inFormat
+            log("mic: formato de entrada \(Int(inFormat.sampleRate))Hz \(inFormat.channelCount)ch")
         }
         guard let converter = micConverter else { return }
         let ratio = micTarget.sampleRate / inFormat.sampleRate
@@ -185,13 +250,40 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
                 try file.write(from: out)
                 micSamplesWritten += AVAudioFramePosition(out.frameLength)
             } catch {
-                FileHandle.standardError.write("mic write error: \(error)\n".data(using: .utf8)!)
+                log("mic: write error: \(error)")
             }
         }
     }
 
+    // startMicWatchdog reports a mic that produces nothing while the meeting clearly
+    // has audio. Diagnostic only — it deliberately does not try to "fix" anything.
+    private func startMicWatchdog() {
+        guard micFile != nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 10, repeating: 10)
+        timer.setEventHandler { [weak self] in
+            guard let self = self, !self.stopping, !self.paused, !self.micWarned else { return }
+            let sys = self.samplesWritten
+            let mic = self.micSamplesWritten
+            let systemFlowing = sys > self.lastSystemSamples
+            let micFlowing = mic > self.lastMicSamples
+            self.lastSystemSamples = sys
+            self.lastMicSamples = mic
+            self.micSilentTicks = (systemFlowing && !micFlowing) ? self.micSilentTicks + 1 : 0
+            if self.micSilentTicks >= 2 { // ~20s of system audio with a dead mic
+                self.micWarned = true
+                log("mic: AVISO — o áudio do sistema está fluindo mas o mic não gravou " +
+                    "nenhum sample em ~20s (fonte=\(self.micSource))")
+            }
+        }
+        timer.resume()
+        micWatchdog = timer
+    }
+
     func stop() async throws {
         stopping = true
+        micWatchdog?.cancel()
+        micWatchdog = nil
         // stopRunning() blocks until in-flight capture callbacks drain, so it is
         // safe to release micFile right after (no callback races on it).
         micSession?.stopRunning()
@@ -203,17 +295,32 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         // left with a 0-frame header and the whole recording is unreadable.
         audioFile = nil
         micFile = nil
+
+        // Never fail silently: say exactly what each channel captured.
+        let systemSeconds = Double(samplesWritten) / Output.sampleRate
+        let micSeconds = Double(micSamplesWritten) / Output.sampleRate
+        log(String(format: "resumo: sistema=%.1fs mic=%.1fs (fonte=%@)",
+                   systemSeconds, micSeconds, micSource))
+        if micURL != nil, micSamplesWritten == 0 {
+            log("mic: FALHOU — 0 samples capturados (fonte=\(micSource)). " +
+                "A reunião foi salva apenas com o áudio dos participantes.")
+        }
+
         if let a = activity {
             ProcessInfo.processInfo.endActivity(a)
             activity = nil
         }
     }
 
-    // SCStreamOutput: receives audio sample buffers.
+    // SCStreamOutput: system audio on .audio, and (macOS 15+) the mic on .microphone.
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
-        guard type == .audio, !paused, sampleBuffer.isValid,
-              let pcm = sampleBuffer.toPCMBuffer() else { return }
+        guard !paused, sampleBuffer.isValid, let pcm = sampleBuffer.toPCMBuffer() else { return }
+        if #available(macOS 15.0, *), type == .microphone {
+            writeMic(pcm)
+            return
+        }
+        guard type == .audio else { return }
         do {
             if audioFile == nil {
                 audioFile = try AVAudioFile(forWriting: outputURL, settings: Output.settings)
@@ -221,23 +328,30 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
             try audioFile?.write(from: pcm)
             samplesWritten += AVAudioFramePosition(pcm.frameLength)
         } catch {
-            FileHandle.standardError.write("write error: \(error)\n".data(using: .utf8)!)
+            log("write error: \(error)")
         }
     }
 
+    // AVCaptureAudioDataOutput (fallback path) delivers mic buffers here.
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        guard !paused, sampleBuffer.isValid, let pcm = sampleBuffer.toPCMBuffer() else { return }
+        writeMic(pcm)
+    }
+
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        FileHandle.standardError.write("stream stopped: \(error)\n".data(using: .utf8)!)
+        log("stream stopped: \(error)")
         // The system capture stream can die mid-recording (display change, etc.).
-        // Restart it (writing continues to the same WAV) so we don't silently lose
+        // Restart it (writing continues to the same WAVs) so we don't silently lose
         // the participants' audio for the rest of the meeting.
         guard !stopping, captureSystem, systemRestarts < 5 else { return }
         systemRestarts += 1
         Task {
             do {
                 try await startSystem()
-                FileHandle.standardError.write("system stream restarted (#\(systemRestarts))\n".data(using: .utf8)!)
+                log("system stream restarted (#\(systemRestarts))")
             } catch {
-                FileHandle.standardError.write("system stream restart failed: \(error)\n".data(using: .utf8)!)
+                log("system stream restart failed: \(error)")
             }
         }
     }
@@ -266,7 +380,7 @@ extension CMSampleBuffer {
 // --- entrypoint -------------------------------------------------------------
 
 func fail(_ message: String) -> Never {
-    FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
+    log(message)
     exit(1)
 }
 
@@ -359,7 +473,7 @@ let parentWatch = DispatchSource.makeTimerSource(queue: .main)
 parentWatch.schedule(deadline: .now() + 2, repeating: 2)
 parentWatch.setEventHandler {
     if getppid() == 1 {
-        FileHandle.standardError.write("parent gone — self-terminating\n".data(using: .utf8)!)
+        log("parent gone — self-terminating")
         stopAndExit()
     }
 }

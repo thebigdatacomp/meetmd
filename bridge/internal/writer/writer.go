@@ -78,6 +78,9 @@ func renderMeeting(m model.Meeting, t texts) string {
 	b.WriteString(frontmatter(m, "", statusRaw, t))
 	fmt.Fprintf(&b, "# %s\n\n", titleOrFallback(m, t))
 	fmt.Fprintf(&b, t.capturedBy, m.StartedAt.Format("2006-01-02 15:04"), m.DurationMin())
+	if m.MicMissing {
+		b.WriteString(t.micMissing)
+	}
 	b.WriteString(t.filesHeading)
 	fmt.Fprintf(&b, t.linkFull, FileTranscript)
 	fmt.Fprintf(&b, t.linkSummary, FileSummary)

@@ -53,6 +53,45 @@ func TestWriteCreatesAllFiles(t *testing.T) {
 	}
 }
 
+// A mic that captured nothing must be called out in meeting.md — otherwise the
+// user only discovers their voice is missing days later, reading a summary.
+func TestMeetingWarnsWhenMicMissing(t *testing.T) {
+	for _, tc := range []struct{ lang, want string }{
+		{"pt", "microfone não foi capturado"},
+		{"en", "microphone was not captured"},
+	} {
+		root := t.TempDir()
+		m := sampleMeeting()
+		m.MicMissing = true
+
+		res, err := Write(root, m, nil, tc.lang)
+		if err != nil {
+			t.Fatalf("Write(%s): %v", tc.lang, err)
+		}
+		body, err := os.ReadFile(filepath.Join(res.SessionDir, FileMeeting))
+		if err != nil {
+			t.Fatalf("read meeting.md: %v", err)
+		}
+		if !strings.Contains(string(body), tc.want) {
+			t.Errorf("meeting.md (%s) missing the mic warning %q:\n%s", tc.lang, tc.want, body)
+		}
+	}
+
+	// And it must NOT appear when the mic worked.
+	root := t.TempDir()
+	res, err := Write(root, sampleMeeting(), nil, "pt")
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(res.SessionDir, FileMeeting))
+	if err != nil {
+		t.Fatalf("read meeting.md: %v", err)
+	}
+	if strings.Contains(string(body), "microfone não foi capturado") {
+		t.Errorf("mic warning shown on a healthy meeting:\n%s", body)
+	}
+}
+
 func TestTranscriptContent(t *testing.T) {
 	root := t.TempDir()
 	m := sampleMeeting()
