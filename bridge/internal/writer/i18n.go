@@ -7,6 +7,7 @@ import "github.com/thebigdatacomp/meetmd/internal/config"
 // Format verbs (%s/%d) must line up across languages.
 type texts struct {
 	capturedBy   string // "> … on %s (%d min)."
+	micMissing   string // warning shown when the mic channel captured nothing
 	filesHeading string
 	linkFull     string // "- [Full transcript](%s)"
 	linkSummary  string // "- [Summary](%s) — _to fill in_"
@@ -41,6 +42,7 @@ type texts struct {
 
 var ptTexts = texts{
 	capturedBy:   "> Reunião capturada por MeetMD em %s (%d min).\n\n",
+	micMissing:   "> ⚠️ **Seu microfone não foi capturado** — este transcript tem apenas a fala dos participantes.\n\n",
 	filesHeading: "## Arquivos\n",
 	linkFull:     "- [Transcrição completa](%s)\n",
 	linkSummary:  "- [Resumo](%s) — _a preencher_\n",
@@ -75,6 +77,7 @@ var ptTexts = texts{
 
 var enTexts = texts{
 	capturedBy:   "> Meeting captured by MeetMD on %s (%d min).\n\n",
+	micMissing:   "> ⚠️ **Your microphone was not captured** — this transcript only has the participants' speech.\n\n",
 	filesHeading: "## Files\n",
 	linkFull:     "- [Full transcript](%s)\n",
 	linkSummary:  "- [Summary](%s) — _to fill in_\n",

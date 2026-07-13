@@ -203,9 +203,14 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 
 	cfg := m.store.Get() // read live config (hot-reloadable)
 	rec, capErr := m.capturer.Stop()
-	segments, err := m.transcribeRecording(ctx, cfg, rec, capErr)
+	segments, micFailed, err := m.transcribeRecording(ctx, cfg, rec, capErr)
 	if err != nil {
 		return writer.Result{}, preserveAudio(cfg.RecordingsRoot, meeting.ID, rec, err)
+	}
+	// A meeting whose mic captured nothing is still saved, but say so in the output:
+	// a silently missing voice is otherwise only noticed days later.
+	if kind != KindNote && rec.MicWav != "" && micFailed {
+		meeting.MicMissing = true
 	}
 
 	var res writer.Result
@@ -423,12 +428,14 @@ func preserveAudio(root, id string, rec audio.Recording, cause error) error {
 // (system = participants, mic = you), and merges them ordered by start time.
 // The stub capturer reports ErrNotImplemented until real capture exists; that is
 // treated as "no audio" so the pipeline still completes with an empty transcript.
-func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, rec audio.Recording, capErr error) ([]model.Segment, error) {
+// It also reports whether the mic channel failed, so the caller can say so in the
+// output instead of letting a missing voice pass unnoticed.
+func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, rec audio.Recording, capErr error) ([]model.Segment, bool, error) {
 	if errors.Is(capErr, audio.ErrNotImplemented) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if capErr != nil {
-		return nil, fmt.Errorf("stop capture: %w", capErr)
+		return nil, false, fmt.Errorf("stop capture: %w", capErr)
 	}
 
 	channels := []struct {
@@ -466,6 +473,7 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 	wg.Wait()
 
 	var segments []model.Segment
+	micFailed := false
 	for i, segs := range results {
 		if errs[i] != nil {
 			// The mic is a secondary channel — a failure (e.g. the mic never
@@ -474,15 +482,25 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 			// a system-channel failure is fatal (→ recovery), since that IS the
 			// meeting (all the participants you heard).
 			if channels[i].voice {
+				micFailed = true
 				log.Printf("mic channel transcription failed, saving meeting without it: %v", errs[i])
 				continue
 			}
-			return nil, errs[i]
+			return nil, false, errs[i]
 		}
 		segments = append(segments, segs...)
 	}
+	// A transcription error only catches a mic WAV whisper cannot read (an empty
+	// file). A mic that broke while still emitting digital silence transcribes
+	// fine — into zero segments — and would slip through as "the user was quiet".
+	// Ask the audio itself whether anything was ever captured.
+	if rec.MicWav != "" && !micFailed && !transcribe.HasAudio(rec.MicWav) {
+		micFailed = true
+		log.Printf("mic channel captured no audio (silent WAV), flagging the meeting")
+	}
+
 	sort.SliceStable(segments, func(i, j int) bool {
 		return segments[i].Start < segments[j].Start
 	})
-	return segments, nil
+	return segments, micFailed, nil
 }
