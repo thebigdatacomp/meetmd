@@ -228,6 +228,9 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 				_ = os.Remove(p)
 			}
 		}
+		if rec.MicWav != "" {
+			_ = os.Remove(rec.MicWav + ".muted") // mic mute-range sidecar, if any
+		}
 	}
 	return res, nil
 }
@@ -416,6 +419,10 @@ func preserveAudio(root, id string, rec audio.Recording, cause error) error {
 		if err := os.Rename(p, filepath.Join(dir, filepath.Base(p))); err == nil {
 			moved = true
 		}
+	}
+	if rec.MicWav != "" { // keep the mute-range sidecar next to its mic WAV for re-transcription
+		muted := rec.MicWav + ".muted"
+		_ = os.Rename(muted, filepath.Join(dir, filepath.Base(muted)))
 	}
 	if !moved {
 		_ = os.Remove(dir)
