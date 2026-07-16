@@ -342,7 +342,14 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         }
         guard !mutedRanges.isEmpty else { return }
         let body = mutedRanges.map { "\($0.start) \($0.end)" }.joined(separator: "\n") + "\n"
-        try? body.data(using: .utf8)?.write(to: dest.appendingPathExtension("muted"))
+        let url = dest.appendingPathExtension("muted")
+        do {
+            try body.data(using: .utf8)?.write(to: url)
+        } catch {
+            // Fail loud: without this file the bridge cannot drop the muted stretches,
+            // so the user's muted audio would be transcribed.
+            log("mic: could not write muted-ranges sidecar (\(error)) — muted audio may be transcribed")
+        }
     }
 
     // startMicWatchdog reports a mic that produces nothing while the meeting clearly

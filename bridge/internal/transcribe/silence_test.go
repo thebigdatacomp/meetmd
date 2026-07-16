@@ -57,13 +57,14 @@ func tone(n int, amp int16) []int16 {
 	return s
 }
 
-// A mic that broke but kept emitting buffers writes digital silence, which whisper
-// transcribes into zero segments — indistinguishable from a quiet user unless we
-// ask the audio itself. HasAudio is what makes that call.
+// While the mic is system-muted the helper still writes silence (to keep the
+// timeline) and records the muted ranges to a sidecar; dropMuted must discard any
+// segment that starts inside one, so a hallucination over that silence never
+// reaches the transcript.
 func TestDropMuted(t *testing.T) {
 	segs := []seg{
 		{start: 2 * time.Second, text: "before mute"},
-		{start: 6 * time.Second, text: "2.5 kg of flour"},  // hallucination while muted
+		{start: 6 * time.Second, text: "2.5 kg of flour"},   // hallucination while muted
 		{start: 8 * time.Second, text: "still muted"},       // inside the muted range
 		{start: 15 * time.Second, text: "back and talking"}, // after unmute
 	}
@@ -85,6 +86,9 @@ func TestDropMuted(t *testing.T) {
 	}
 }
 
+// A mic that broke but kept emitting buffers writes digital silence, which whisper
+// transcribes into zero segments — indistinguishable from a quiet user unless we
+// ask the audio itself. HasAudio is what makes that call.
 func TestHasAudio(t *testing.T) {
 	rate := 16000
 	if !HasAudio(writeWAV(t, tone(rate, 800))) { // quiet, but a real noise floor
