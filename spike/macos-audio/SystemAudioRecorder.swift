@@ -76,6 +76,17 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private var micDestURL: URL?   // where the mic is being written, if at all
     private var micFallbackObserver: NSObjectProtocol?
 
+    // Mute gate: when the system microphone is muted (e.g. the keyboard's mic-mute
+    // key), the OS delivers pure digital silence to every capturer. We keep writing
+    // that silence to preserve the mic timeline (so You:/Participants stay aligned
+    // when merged), and record the muted time ranges so the bridge can drop those
+    // stretches from the transcript — your voice is not recorded while you are
+    // muted. The participants ride a separate channel (system audio) and are never
+    // touched by this. Ranges are in milliseconds from the recording start.
+    private var micMutedNow = false
+    private var micMuteStartMs: Int = 0
+    private var mutedRanges: [(start: Int, end: Int)] = []
+
     // Watchdog: purely diagnostic. It only reports "the system is producing audio
     // but the mic has produced none" — it never re-arms anything (a re-arm loop is
     // what crashed the recorder before and cost a whole meeting).
@@ -284,12 +295,60 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
             return pcm
         }
         if convError == nil, out.frameLength > 0 {
+            // Track mute BEFORE writing, timestamped at this buffer's start so the
+            // range lines up with whisper's timestamps (both in mic-WAV time).
+            trackMute(out, atMs: Int(Double(micSamplesWritten) / Output.sampleRate * 1000))
             do {
-                try file.write(from: out)
+                try file.write(from: out) // keep writing silence: preserves the timeline
                 micSamplesWritten += AVAudioFramePosition(out.frameLength)
             } catch {
                 log("mic: write error: \(error)")
             }
+        }
+    }
+
+    // trackMute opens/closes a muted range as the mic flips between pure silence
+    // (system-muted) and real audio. A live mic always carries a noise floor, so an
+    // all-zero buffer means the input is muted, never just a quiet speaker.
+    private func trackMute(_ buffer: AVAudioPCMBuffer, atMs: Int) {
+        let silent = isSilent(buffer)
+        if silent, !micMutedNow {
+            micMutedNow = true
+            micMuteStartMs = atMs
+            log("mic: input muted (silence) — dropping this stretch from the transcript")
+        } else if !silent, micMutedNow {
+            micMutedNow = false
+            mutedRanges.append((micMuteStartMs, atMs))
+            log("mic: input active again")
+        }
+    }
+
+    private func isSilent(_ buffer: AVAudioPCMBuffer) -> Bool {
+        guard let channels = buffer.floatChannelData else { return false }
+        let frames = Int(buffer.frameLength)
+        for c in 0 ..< Int(buffer.format.channelCount) {
+            let data = channels[c]
+            for i in 0 ..< frames where data[i] != 0 { return false }
+        }
+        return true
+    }
+
+    // writeMutedRanges persists the muted time ranges next to the mic WAV so the
+    // bridge can drop those stretches. Missing file = nothing was muted.
+    private func writeMutedRanges() {
+        guard let dest = micDestURL else { return }
+        if micMutedNow { // still muted at stop → close the final range
+            mutedRanges.append((micMuteStartMs, Int(Double(micSamplesWritten) / Output.sampleRate * 1000)))
+        }
+        guard !mutedRanges.isEmpty else { return }
+        let body = mutedRanges.map { "\($0.start) \($0.end)" }.joined(separator: "\n") + "\n"
+        let url = dest.appendingPathExtension("muted")
+        do {
+            try body.data(using: .utf8)?.write(to: url)
+        } catch {
+            // Fail loud: without this file the bridge cannot drop the muted stretches,
+            // so the user's muted audio would be transcribed.
+            log("mic: could not write muted-ranges sidecar (\(error)) — muted audio may be transcribed")
         }
     }
 
@@ -332,6 +391,7 @@ final class SystemAudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
         // left with a 0-frame header and the whole recording is unreadable.
         audioFile = nil
         micFile = nil
+        writeMutedRanges()
 
         // Never fail silently: say exactly what each channel captured.
         let systemSeconds = Double(samplesWritten) / Output.sampleRate

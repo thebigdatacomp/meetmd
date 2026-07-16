@@ -64,6 +64,7 @@ func (w Whisper) Transcribe(ctx context.Context, wavPath string) ([]model.Segmen
 	}
 	if w.Voice {
 		raw = dropSilent(wavPath, raw)
+		raw = dropMuted(wavPath+".muted", raw)
 	}
 	segs := make([]model.Segment, 0, len(raw))
 	for _, r := range raw {

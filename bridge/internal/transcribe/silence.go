@@ -5,8 +5,54 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
+
+// dropMuted removes mic segments that start inside a muted range. The helper
+// writes these ranges (one "startMs endMs" per line) next to the mic WAV whenever
+// the system microphone was muted during the recording (e.g. the keyboard's mic
+// key), so audio captured while the user was muted is not transcribed. The ranges
+// are in mic-WAV time, the same base as the segment timestamps. A missing or
+// empty file means nothing was muted.
+func dropMuted(path string, segs []seg) []seg {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return segs
+	}
+	type rng struct{ start, end time.Duration }
+	var ranges []rng
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		s, err1 := strconv.Atoi(f[0])
+		e, err2 := strconv.Atoi(f[1])
+		if err1 != nil || err2 != nil || e <= s {
+			continue
+		}
+		ranges = append(ranges, rng{time.Duration(s) * time.Millisecond, time.Duration(e) * time.Millisecond})
+	}
+	if len(ranges) == 0 {
+		return segs
+	}
+	kept := segs[:0]
+	for _, sg := range segs {
+		muted := false
+		for _, r := range ranges {
+			if sg.start >= r.start && sg.start < r.end {
+				muted = true
+				break
+			}
+		}
+		if !muted {
+			kept = append(kept, sg)
+		}
+	}
+	return kept
+}
 
 // loadPCM16 reads a mono 16-bit PCM WAV (the format the macOS capture helper
 // writes) into samples plus its sample rate. Multi-channel input is downmixed.

@@ -57,6 +57,35 @@ func tone(n int, amp int16) []int16 {
 	return s
 }
 
+// While the mic is system-muted the helper still writes silence (to keep the
+// timeline) and records the muted ranges to a sidecar; dropMuted must discard any
+// segment that starts inside one, so a hallucination over that silence never
+// reaches the transcript.
+func TestDropMuted(t *testing.T) {
+	segs := []seg{
+		{start: 2 * time.Second, text: "before mute"},
+		{start: 6 * time.Second, text: "2.5 kg of flour"},   // hallucination while muted
+		{start: 8 * time.Second, text: "still muted"},       // inside the muted range
+		{start: 15 * time.Second, text: "back and talking"}, // after unmute
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mic.wav.muted")
+	// Muted from 5s to 10s.
+	if err := os.WriteFile(path, []byte("5000 10000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := dropMuted(path, segs)
+	if len(got) != 2 || got[0].text != "before mute" || got[1].text != "back and talking" {
+		t.Fatalf("dropMuted kept the wrong segments: %+v", got)
+	}
+
+	// No sidecar → nothing dropped.
+	if len(dropMuted(filepath.Join(dir, "missing"), segs)) != len(segs) {
+		t.Error("dropMuted dropped segments with no muted-ranges file")
+	}
+}
+
 // A mic that broke but kept emitting buffers writes digital silence, which whisper
 // transcribes into zero segments — indistinguishable from a quiet user unless we
 // ask the audio itself. HasAudio is what makes that call.
