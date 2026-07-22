@@ -30,6 +30,39 @@ func TestAudioDuration(t *testing.T) {
 	}
 }
 
+// A WAV header is only correct when the file is closed cleanly, so a killed run
+// leaves a data size of zero or a stale, too small one. Believing it would
+// understate the recording and overstate coverage — waving through exactly the
+// truncated transcripts this check exists to catch.
+func TestAudioDurationDistrustsUndersizedHeader(t *testing.T) {
+	const rate = 16000
+	wav := writeWAV(t, tone(10*rate, 1000)) // 10 seconds of samples on disk
+	raw, err := os.ReadFile(wav)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"zero", "stale"} {
+		size := uint32(0)
+		if name == "stale" {
+			size = uint32(rate) * 2 / 10 // header claims 0.1s
+		}
+		broken := append([]byte(nil), raw...)
+		broken[40], broken[41] = byte(size), byte(size>>8)
+		broken[42], broken[43] = byte(size>>16), byte(size>>24)
+		path := filepath.Join(t.TempDir(), name+".wav")
+		if err := os.WriteFile(path, broken, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := audioDuration(path)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got < 9*time.Second {
+			t.Errorf("%s header: duration = %v, want ~10s from the bytes on disk", name, got)
+		}
+	}
+}
+
 func TestSpeechCoverage(t *testing.T) {
 	segs := []seg{
 		{start: 0, end: 10 * time.Second},

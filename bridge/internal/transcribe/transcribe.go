@@ -23,6 +23,10 @@ type Result struct {
 	// Segments are the transcript, ordered by Start.
 	Segments []model.Segment
 	// Coverage is the share of the recording that came back as speech (0..1).
+	//
+	// Only meaningful for the system channel. On the mic channel it is low by
+	// design — the loudness and mute filters drop most of a recording where one
+	// person speaks occasionally — so low coverage there says nothing is wrong.
 	Coverage float64
 	// Audited is true when the recording was long enough for Coverage to mean
 	// something. Callers must ignore Coverage when it is false.

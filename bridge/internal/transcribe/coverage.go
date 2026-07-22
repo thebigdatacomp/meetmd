@@ -89,10 +89,17 @@ func audioDuration(path string) (time.Duration, error) {
 			if byteRate == 0 {
 				return 0, fmt.Errorf("data chunk before fmt chunk in %s", path)
 			}
+			// Trust whichever source says the recording is longer. A header is
+			// only written correctly when the file is closed cleanly, so a run
+			// that was killed mid-write leaves a size of zero or a stale, too
+			// small one — and understating the length overstates coverage, which
+			// would wave through exactly the broken transcripts this exists to
+			// catch. Overstating it only risks keeping audio we could have
+			// deleted.
 			bytes := int64(size)
-			if bytes == 0 { // header never finalised — fall back to what is on disk
-				if st, err := f.Stat(); err == nil {
-					bytes = st.Size() - int64(body)
+			if st, err := f.Stat(); err == nil {
+				if onDisk := st.Size() - int64(body); onDisk > bytes {
+					bytes = onDisk
 				}
 			}
 			if bytes <= 0 {
