@@ -6,15 +6,16 @@ import "github.com/thebigdatacomp/meetmd/internal/config"
 // language. Adding a language = adding one texts value to the table below.
 // Format verbs (%s/%d) must line up across languages.
 type texts struct {
-	capturedBy   string // "> … on %s (%d min)."
-	micMissing   string // warning shown when the mic channel captured nothing
-	filesHeading string
-	linkFull     string // "- [Full transcript](%s)"
-	linkSummary  string // "- [Summary](%s) — _to fill in_"
-	linkActions  string // "- [Actions](%s) — _to fill in_"
-	participants string // heading
-	notCaptured  string
-	noSpeech     string
+	capturedBy        string // "> … on %s (%d min)."
+	micMissing        string // warning shown when the mic channel captured nothing
+	transcriptSuspect string // warning shown when the transcript covers little of the recording
+	filesHeading      string
+	linkFull          string // "- [Full transcript](%s)"
+	linkSummary       string // "- [Summary](%s) — _to fill in_"
+	linkActions       string // "- [Actions](%s) — _to fill in_"
+	participants      string // heading
+	notCaptured       string
+	noSpeech          string
 
 	transcriptTitle string // "# Transcript — %s"
 	summaryTitle    string // "# Summary — %s"
@@ -41,15 +42,16 @@ type texts struct {
 }
 
 var ptTexts = texts{
-	capturedBy:   "> Reunião capturada por MeetMD em %s (%d min).\n\n",
-	micMissing:   "> ⚠️ **Seu microfone não foi capturado** — este transcript tem apenas a fala dos participantes.\n\n",
-	filesHeading: "## Arquivos\n",
-	linkFull:     "- [Transcrição completa](%s)\n",
-	linkSummary:  "- [Resumo](%s) — _a preencher_\n",
-	linkActions:  "- [Ações](%s) — _a preencher_\n\n",
-	participants: "## Participantes\n",
-	notCaptured:  "- _(não capturados)_\n",
-	noSpeech:     "_(sem fala detectada — nenhum áudio audível durante a gravação)_\n",
+	capturedBy:        "> Reunião capturada por MeetMD em %s (%d min).\n\n",
+	micMissing:        "> ⚠️ **Seu microfone não foi capturado** — este transcript tem apenas a fala dos participantes.\n\n",
+	transcriptSuspect: "> ⚠️ **Transcrição possivelmente incompleta** — o transcript cobre só uma fração do que foi gravado. O áudio bruto foi preservado em `recovery/` para reprocessamento.\n\n",
+	filesHeading:      "## Arquivos\n",
+	linkFull:          "- [Transcrição completa](%s)\n",
+	linkSummary:       "- [Resumo](%s) — _a preencher_\n",
+	linkActions:       "- [Ações](%s) — _a preencher_\n\n",
+	participants:      "## Participantes\n",
+	notCaptured:       "- _(não capturados)_\n",
+	noSpeech:          "_(sem fala detectada — nenhum áudio audível durante a gravação)_\n",
 
 	transcriptTitle: "# Transcrição — %s\n\n",
 	summaryTitle:    "# Resumo — %s\n\n",
@@ -76,15 +78,16 @@ var ptTexts = texts{
 }
 
 var enTexts = texts{
-	capturedBy:   "> Meeting captured by MeetMD on %s (%d min).\n\n",
-	micMissing:   "> ⚠️ **Your microphone was not captured** — this transcript only has the participants' speech.\n\n",
-	filesHeading: "## Files\n",
-	linkFull:     "- [Full transcript](%s)\n",
-	linkSummary:  "- [Summary](%s) — _to fill in_\n",
-	linkActions:  "- [Actions](%s) — _to fill in_\n\n",
-	participants: "## Participants\n",
-	notCaptured:  "- _(not captured)_\n",
-	noSpeech:     "_(no speech detected — no audible audio during the recording)_\n",
+	capturedBy:        "> Meeting captured by MeetMD on %s (%d min).\n\n",
+	micMissing:        "> ⚠️ **Your microphone was not captured** — this transcript only has the participants' speech.\n\n",
+	transcriptSuspect: "> ⚠️ **Transcript may be incomplete** — it covers only a fraction of what was recorded. The raw audio was kept in `recovery/` so it can be re-processed.\n\n",
+	filesHeading:      "## Files\n",
+	linkFull:          "- [Full transcript](%s)\n",
+	linkSummary:       "- [Summary](%s) — _to fill in_\n",
+	linkActions:       "- [Actions](%s) — _to fill in_\n\n",
+	participants:      "## Participants\n",
+	notCaptured:       "- _(not captured)_\n",
+	noSpeech:          "_(no speech detected — no audible audio during the recording)_\n",
 
 	transcriptTitle: "# Transcript — %s\n\n",
 	summaryTitle:    "# Summary — %s\n\n",

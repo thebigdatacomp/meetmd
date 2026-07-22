@@ -81,6 +81,9 @@ func renderMeeting(m model.Meeting, t texts) string {
 	if m.MicMissing {
 		b.WriteString(t.micMissing)
 	}
+	if m.TranscriptSuspect {
+		b.WriteString(t.transcriptSuspect)
+	}
 	b.WriteString(t.filesHeading)
 	fmt.Fprintf(&b, t.linkFull, FileTranscript)
 	fmt.Fprintf(&b, t.linkSummary, FileSummary)
