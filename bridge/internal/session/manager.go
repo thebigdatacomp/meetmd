@@ -203,14 +203,18 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 
 	cfg := m.store.Get() // read live config (hot-reloadable)
 	rec, capErr := m.capturer.Stop()
-	segments, micFailed, err := m.transcribeRecording(ctx, cfg, rec, capErr)
+	segments, audit, err := m.transcribeRecording(ctx, cfg, rec, capErr)
 	if err != nil {
 		return writer.Result{}, preserveAudio(cfg.RecordingsRoot, meeting.ID, rec, err)
 	}
 	// A meeting whose mic captured nothing is still saved, but say so in the output:
 	// a silently missing voice is otherwise only noticed days later.
-	if kind != KindNote && rec.MicWav != "" && micFailed {
+	if kind != KindNote && rec.MicWav != "" && audit.micFailed {
 		meeting.MicMissing = true
+	}
+	// Same for a transcript that cannot account for its recording.
+	if kind != KindNote && audit.systemSuspect {
+		meeting.TranscriptSuspect = true
 	}
 
 	var res writer.Result
@@ -222,17 +226,32 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 	if err != nil {
 		return writer.Result{}, preserveAudio(cfg.RecordingsRoot, meeting.ID, rec, err)
 	}
+	// The raw audio is the only irreplaceable artefact here: a transcript can
+	// always be produced again from it, and never without it. So it is deleted
+	// only once something has vouched for what replaced it — otherwise it is
+	// filed under recovery/, where a bad run costs disk instead of the meeting.
+	if audit.systemSuspect {
+		if dir, ok := keepAudio(cfg.RecordingsRoot, meeting.ID, rec); ok {
+			log.Printf("raw audio kept in %s — re-run the transcript from there", dir)
+		}
+		return res, nil
+	}
 	if cfg.Audio.DeleteWavOnFinish {
-		for _, p := range []string{rec.SystemWav, rec.MicWav} {
-			if p != "" {
-				_ = os.Remove(p)
-			}
-		}
-		if rec.MicWav != "" {
-			_ = os.Remove(rec.MicWav + ".muted") // mic mute-range sidecar, if any
-		}
+		discardAudio(rec)
 	}
 	return res, nil
+}
+
+// discardAudio removes a recording's WAVs and the mic mute-range sidecar.
+func discardAudio(rec audio.Recording) {
+	for _, p := range []string{rec.SystemWav, rec.MicWav} {
+		if p != "" {
+			_ = os.Remove(p)
+		}
+	}
+	if rec.MicWav != "" {
+		_ = os.Remove(rec.MicWav + ".muted")
+	}
 }
 
 // Cancel aborts the active recording and discards its audio.
@@ -407,9 +426,22 @@ func outputRoot(base, project string) string {
 // the recordings root (not the volatile temp dir), so a transcription/write
 // failure never loses the audio, and annotates the error with where to find it.
 func preserveAudio(root, id string, rec audio.Recording, cause error) error {
+	dir, ok := keepAudio(root, id, rec)
+	if !ok {
+		return cause
+	}
+	return fmt.Errorf("%w (raw audio preserved in %s)", cause, dir)
+}
+
+// keepAudio moves a recording's raw WAVs out of the volatile temp dir into a
+// recovery folder under the recordings root, reporting where they landed. It is
+// the one way audio leaves a session without being destroyed, used both when the
+// meeting failed outright and when it saved but the transcript cannot be
+// trusted — in either case the audio is what makes a second attempt possible.
+func keepAudio(root, id string, rec audio.Recording) (string, bool) {
 	dir := filepath.Join(root, "recovery", id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return cause
+		return "", false
 	}
 	moved := false
 	for _, p := range []string{rec.SystemWav, rec.MicWav} {
@@ -426,9 +458,9 @@ func preserveAudio(root, id string, rec audio.Recording, cause error) error {
 	}
 	if !moved {
 		_ = os.Remove(dir)
-		return cause
+		return "", false
 	}
-	return fmt.Errorf("%w (raw audio preserved in %s)", cause, dir)
+	return dir, true
 }
 
 // transcribeRecording transcribes whichever channels were captured, labels each
@@ -437,12 +469,30 @@ func preserveAudio(root, id string, rec audio.Recording, cause error) error {
 // treated as "no audio" so the pipeline still completes with an empty transcript.
 // It also reports whether the mic channel failed, so the caller can say so in the
 // output instead of letting a missing voice pass unnoticed.
-func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, rec audio.Recording, capErr error) ([]model.Segment, bool, error) {
+// transcriptAudit is what the transcription pass could and could not vouch for.
+// It travels with the segments so Stop can tell a meeting that is merely quiet
+// from one whose audio never made it into the transcript.
+type transcriptAudit struct {
+	// micFailed marks a mic channel that captured or transcribed nothing.
+	micFailed bool
+	// systemSuspect marks a system transcript covering so little of its recording
+	// that a stage must have dropped audio. The meeting is still written — the
+	// partial transcript is worth having — but the raw audio is kept instead of
+	// deleted, so the meeting can be recovered rather than lost.
+	systemSuspect bool
+}
+
+// systemChannel is the index of the system-audio channel in the channels table
+// below. That channel IS the meeting (everything the participants said), which
+// is why only its coverage decides whether the recording is worth keeping.
+const systemChannel = 0
+
+func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, rec audio.Recording, capErr error) ([]model.Segment, transcriptAudit, error) {
 	if errors.Is(capErr, audio.ErrNotImplemented) {
-		return nil, false, nil
+		return nil, transcriptAudit{}, nil
 	}
 	if capErr != nil {
-		return nil, false, fmt.Errorf("stop capture: %w", capErr)
+		return nil, transcriptAudit{}, fmt.Errorf("stop capture: %w", capErr)
 	}
 
 	channels := []struct {
@@ -450,13 +500,14 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 		speaker model.Speaker
 		voice   bool // mic channel: no VAD + loudness filter (see TranscriberFor)
 	}{
-		{rec.SystemWav, model.SpeakerOthers, false},
-		{rec.MicWav, model.SpeakerYou, true},
+		systemChannel: {rec.SystemWav, model.SpeakerOthers, false},
+		1:             {rec.MicWav, model.SpeakerYou, true},
 	}
 
 	// Transcribe both channels concurrently — each whisper run is the slow part,
 	// so this ~halves wall time when both channels have audio.
 	results := make([][]model.Segment, len(channels))
+	audits := make([]transcribe.Result, len(channels))
 	errs := make([]error, len(channels))
 	var wg sync.WaitGroup
 	for i, ch := range channels {
@@ -466,15 +517,16 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 		wg.Add(1)
 		go func(i int, wav string, speaker model.Speaker, voice bool) {
 			defer wg.Done()
-			segs, err := m.newTranscriber(cfg, voice).Transcribe(ctx, wav)
+			res, err := m.newTranscriber(cfg, voice).Transcribe(ctx, wav)
 			if err != nil {
 				errs[i] = err
 				return
 			}
-			for j := range segs {
-				segs[j].Speaker = speaker
+			for j := range res.Segments {
+				res.Segments[j].Speaker = speaker
 			}
-			results[i] = segs
+			results[i] = res.Segments
+			audits[i] = res
 		}(i, ch.wav, ch.speaker, ch.voice)
 	}
 	wg.Wait()
@@ -493,7 +545,7 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 				log.Printf("mic channel transcription failed, saving meeting without it: %v", errs[i])
 				continue
 			}
-			return nil, false, errs[i]
+			return nil, transcriptAudit{}, errs[i]
 		}
 		segments = append(segments, segs...)
 	}
@@ -506,8 +558,18 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 		log.Printf("mic channel captured no audio (silent WAV), flagging the meeting")
 	}
 
+	// The system channel carries the meeting, so measure the transcript against
+	// the audio it came from. Whisper reports success either way; only this ratio
+	// distinguishes "they barely spoke" from "we dropped most of the recording".
+	audit := transcriptAudit{micFailed: micFailed}
+	if sys := audits[systemChannel]; rec.SystemWav != "" && !sys.Plausible() {
+		audit.systemSuspect = true
+		log.Printf("system transcript covers only %.1f%% of the recording — keeping the audio for reprocessing",
+			sys.Coverage*100)
+	}
+
 	sort.SliceStable(segments, func(i, j int) bool {
 		return segments[i].Start < segments[j].Start
 	})
-	return segments, micFailed, nil
+	return segments, audit, nil
 }

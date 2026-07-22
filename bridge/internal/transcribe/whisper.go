@@ -56,12 +56,39 @@ type seg struct {
 }
 
 // Transcribe runs whisper.cpp over wavPath and parses its JSON output into
-// timestamped segments.
-func (w Whisper) Transcribe(ctx context.Context, wavPath string) ([]model.Segment, error) {
-	raw, err := w.run(ctx, wavPath)
+// timestamped segments, then checks the result against the recording it came
+// from before handing it back.
+func (w Whisper) Transcribe(ctx context.Context, wavPath string) (Result, error) {
+	total, err := audioDuration(wavPath)
 	if err != nil {
-		return nil, err
+		log.Printf("transcribe: cannot read length of %s (%v) — coverage unchecked", wavPath, err)
 	}
+
+	useVAD := w.vadUsable()
+	raw, err := w.run(ctx, wavPath, useVAD)
+	if err != nil {
+		return Result{}, err
+	}
+
+	// VAD is an optimisation, never a requirement. When it reports almost no
+	// speech across a long recording it has misclassified the audio rather than
+	// found silence — quiet recordings do exactly this, and the audio transcribes
+	// fine without it. Redo the pass and keep whichever run heard more, so the
+	// second run can only help. It costs time only in the failure case.
+	if useVAD && total > 0 && speechCoverage(raw, total) < minVADCoverage {
+		log.Printf("transcribe: VAD returned %s of speech across %s of audio — retrying without VAD",
+			speechSeconds(raw).Round(time.Second), total.Round(time.Second))
+		retry, retryErr := w.run(ctx, wavPath, false)
+		switch {
+		case retryErr != nil:
+			log.Printf("transcribe: no-VAD retry failed (%v) — keeping the VAD result", retryErr)
+		case speechSeconds(retry) > speechSeconds(raw):
+			log.Printf("transcribe: no-VAD retry recovered %s of speech",
+				speechSeconds(retry).Round(time.Second))
+			raw = retry
+		}
+	}
+
 	if w.Voice {
 		raw = dropSilent(wavPath, raw)
 		raw = dropMuted(wavPath+".muted", raw)
@@ -70,10 +97,25 @@ func (w Whisper) Transcribe(ctx context.Context, wavPath string) ([]model.Segmen
 	for _, r := range raw {
 		segs = append(segs, model.Segment{Start: r.start, Text: r.text})
 	}
-	return segs, nil
+	return Result{
+		Segments: segs,
+		Coverage: speechCoverage(raw, total),
+		Audited:  total >= minAuditedLength,
+	}, nil
 }
 
-func (w Whisper) run(ctx context.Context, wavPath string) ([]seg, error) {
+// vadUsable reports whether this run should hand whisper the VAD model. The mic
+// channel never uses it: there VAD fuses utterances across the long silences and
+// mis-stamps them (see run).
+func (w Whisper) vadUsable() bool {
+	if w.Voice || w.VADModel == "" {
+		return false
+	}
+	_, err := os.Stat(w.VADModel)
+	return err == nil
+}
+
+func (w Whisper) run(ctx context.Context, wavPath string, useVAD bool) ([]seg, error) {
 	lang := w.Language
 	if lang == "" {
 		lang = LanguageAuto
@@ -95,11 +137,10 @@ func (w Whisper) run(ctx context.Context, wavPath string) ([]seg, error) {
 	// channels. We use it on the system channel (continuous speech) but NOT on the
 	// mic (Voice): there, VAD compresses the long silences and whisper fuses far
 	// apart utterances into one segment stamped at the earlier time. The mic relies
-	// on the loudness filter instead.
-	if !w.Voice && w.VADModel != "" {
-		if _, err := os.Stat(w.VADModel); err == nil {
-			args = append(args, "--vad", "-vm", w.VADModel)
-		}
+	// on the loudness filter instead. The caller may also turn it off to redo a
+	// pass VAD got wrong — see Transcribe.
+	if useVAD {
+		args = append(args, "--vad", "-vm", w.VADModel)
 	}
 
 	cmd := exec.CommandContext(ctx, w.BinPath, args...)

@@ -16,10 +16,35 @@ const EngineLocal = "local"
 // whisperBinaries are the candidate CLI names brew's whisper-cpp may install.
 var whisperBinaries = []string{"whisper-cli", "whisper-cpp"}
 
+// Result is one transcription pass plus the evidence needed to judge it. The
+// segments alone cannot say whether they represent the recording: an empty
+// transcript looks identical whether nobody spoke or a stage silently failed.
+type Result struct {
+	// Segments are the transcript, ordered by Start.
+	Segments []model.Segment
+	// Coverage is the share of the recording that came back as speech (0..1).
+	//
+	// Only meaningful for the system channel. On the mic channel it is low by
+	// design — the loudness and mute filters drop most of a recording where one
+	// person speaks occasionally — so low coverage there says nothing is wrong.
+	Coverage float64
+	// Audited is true when the recording was long enough for Coverage to mean
+	// something. Callers must ignore Coverage when it is false.
+	Audited bool
+}
+
+// Plausible reports whether the transcript can be trusted to represent its
+// recording. An unaudited result is plausible by default: absent evidence is not
+// evidence of failure.
+func (r Result) Plausible() bool {
+	return !r.Audited || r.Coverage >= MinPlausibleCoverage
+}
+
 // Transcriber converts a recorded WAV into ordered transcript segments.
 type Transcriber interface {
-	// Transcribe processes wavPath and returns segments ordered by Start.
-	Transcribe(ctx context.Context, wavPath string) ([]model.Segment, error)
+	// Transcribe processes wavPath and returns its segments plus the evidence
+	// needed to tell a quiet recording from a failed one.
+	Transcribe(ctx context.Context, wavPath string) (Result, error)
 }
 
 // Options configures which Transcriber New builds.
@@ -66,6 +91,6 @@ func New(o Options) (Transcriber, string) {
 // rather than failing the session.
 type Stub struct{}
 
-func (Stub) Transcribe(context.Context, string) ([]model.Segment, error) {
-	return nil, nil
+func (Stub) Transcribe(context.Context, string) (Result, error) {
+	return Result{}, nil
 }

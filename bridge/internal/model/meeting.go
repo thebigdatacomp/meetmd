@@ -57,6 +57,11 @@ type Meeting struct {
 	// still saved (the participants' audio is the meeting), but the user must be
 	// told in the output — a silently missing voice is only discovered days later.
 	MicMissing bool
+	// TranscriptSuspect marks a meeting whose transcript accounts for only a
+	// fraction of what was recorded, so audio was lost somewhere in the pipeline.
+	// The partial transcript is still saved and the raw audio kept, but a
+	// half-empty transcript reads exactly like a quiet meeting unless we say so.
+	TranscriptSuspect bool
 }
 
 // DurationMin returns the meeting length in whole minutes (0 if not ended).
