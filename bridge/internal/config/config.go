@@ -21,6 +21,11 @@ const (
 	defaultMode     = "ask"  // auto-detect: prompt before recording
 	defaultUILang   = LangEN // UI + .md output language; "auto" follows the OS, "pt" forces Portuguese
 
+	// Preserved raw audio is bounded on both axes: long enough to notice a bad
+	// transcript and redo it, small enough that it cannot quietly fill the disk.
+	defaultRecoveryDays  = 7
+	defaultRecoveryMaxGB = 2.0
+
 	configDirName  = ".meetmd"
 	configFileName = "config.yaml"
 
@@ -79,6 +84,17 @@ type Audio struct {
 	CaptureMic        bool   `yaml:"capture_mic"`          // capture the user mic as a separate channel
 	DeleteWavOnFinish bool   `yaml:"delete_wav_on_finish"` // remove temp WAV after transcription
 	MacHelperPath     string `yaml:"mac_helper_path"`      // path to system-audio-recorder (empty = look up in PATH)
+	// RecoveryRetentionDays and RecoveryMaxGB bound the raw audio kept under
+	// recovery/ when a run fails or its transcript cannot be trusted. That audio
+	// is the only way to redo a lost meeting, so it is kept — but a folder that
+	// only ever grows is its own silent failure.
+	//
+	// Following the rest of this struct, zero means "unset" and is backfilled
+	// with the default; a negative value disables that limit deliberately. An
+	// existing config.yaml predating these keys must inherit the bounds, not
+	// silently opt out of them.
+	RecoveryRetentionDays int     `yaml:"recovery_retention_days"`
+	RecoveryMaxGB         float64 `yaml:"recovery_max_gb"`
 }
 
 // Default returns a Config with all defaults applied (no config file).
@@ -89,8 +105,11 @@ func Default() Config {
 		Language:       defaultLanguage,
 		UILanguage:     defaultUILang,
 		Whisper:        Whisper{Engine: defaultEngine, ModelPath: defaultModelPath(), VADModel: defaultVADModelPath()},
-		Audio:          Audio{CaptureMic: true, DeleteWavOnFinish: true},
-		AutoDetect:     AutoDetect{Enabled: true, Mode: defaultMode, IntervalSeconds: defaultInterval},
+		Audio: Audio{
+			CaptureMic: true, DeleteWavOnFinish: true,
+			RecoveryRetentionDays: defaultRecoveryDays, RecoveryMaxGB: defaultRecoveryMaxGB,
+		},
+		AutoDetect: AutoDetect{Enabled: true, Mode: defaultMode, IntervalSeconds: defaultInterval},
 	}
 }
 
@@ -141,6 +160,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Whisper.VADModel == "" {
 		c.Whisper.VADModel = d.Whisper.VADModel
+	}
+	if c.Audio.RecoveryRetentionDays == 0 {
+		c.Audio.RecoveryRetentionDays = d.Audio.RecoveryRetentionDays
+	}
+	if c.Audio.RecoveryMaxGB == 0 {
+		c.Audio.RecoveryMaxGB = d.Audio.RecoveryMaxGB
 	}
 	if c.AutoDetect.IntervalSeconds == 0 {
 		c.AutoDetect.IntervalSeconds = d.AutoDetect.IntervalSeconds

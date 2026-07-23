@@ -234,11 +234,14 @@ func (m *Manager) Stop(ctx context.Context, id string) (writer.Result, error) {
 		if dir, ok := keepAudio(cfg.RecordingsRoot, meeting.ID, rec); ok {
 			log.Printf("raw audio kept in %s — re-run the transcript from there", dir)
 		}
-		return res, nil
-	}
-	if cfg.Audio.DeleteWavOnFinish {
+	} else if cfg.Audio.DeleteWavOnFinish {
 		discardAudio(rec)
 	}
+	// Bound the preserved audio last, so this session's own recording is already
+	// in place and ages out on the same terms as every other.
+	pruneRecovery(cfg.RecordingsRoot,
+		time.Duration(cfg.Audio.RecoveryRetentionDays)*24*time.Hour,
+		int64(cfg.Audio.RecoveryMaxGB*bytesPerGB))
 	return res, nil
 }
 
