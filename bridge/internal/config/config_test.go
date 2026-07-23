@@ -24,6 +24,13 @@ func TestApplyDefaultsBackfills(t *testing.T) {
 	if c.AutoDetect.Mode != defaultMode || c.AutoDetect.IntervalSeconds != defaultInterval {
 		t.Errorf("auto-detect defaults not backfilled: %+v", c.AutoDetect)
 	}
+	// An existing config.yaml written before these keys existed must inherit the
+	// bounds — otherwise the users who already run MeetMD are exactly the ones who
+	// silently keep unbounded recovery growth.
+	if c.Audio.RecoveryRetentionDays != defaultRecoveryDays || c.Audio.RecoveryMaxGB != defaultRecoveryMaxGB {
+		t.Errorf("recovery bounds not backfilled: days=%d maxGB=%v",
+			c.Audio.RecoveryRetentionDays, c.Audio.RecoveryMaxGB)
+	}
 }
 
 func TestApplyDefaultsKeepsExplicitValues(t *testing.T) {
