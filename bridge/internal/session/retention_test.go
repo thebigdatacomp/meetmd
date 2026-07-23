@@ -49,18 +49,21 @@ func TestPruneRecoveryDropsAgedOut(t *testing.T) {
 
 func TestPruneRecoveryEnforcesSizeBudgetOldestFirst(t *testing.T) {
 	root := t.TempDir()
-	// Three 1 GB recordings, all within the age limit, under a 2 GB budget.
-	oldest := mkRecovery(t, root, "d1-oldest", 1<<30, 72*time.Hour)
-	mid := mkRecovery(t, root, "d2-mid", 1<<30, 48*time.Hour)
-	newest := mkRecovery(t, root, "d3-newest", 1<<30, 24*time.Hour)
+	// Three 4 MB recordings under an 8 MB budget: the oldest must go. Sizes are
+	// small on purpose — the budget logic is scale-free, so testing it with real
+	// gigabytes would only burn CI memory to prove the same thing.
+	const mb = 1 << 20
+	oldest := mkRecovery(t, root, "d1-oldest", 4*mb, 72*time.Hour)
+	mid := mkRecovery(t, root, "d2-mid", 4*mb, 48*time.Hour)
+	newest := mkRecovery(t, root, "d3-newest", 4*mb, 24*time.Hour)
 
-	pruneRecovery(root, 30*24*time.Hour, 2<<30)
+	pruneRecovery(root, 30*24*time.Hour, 8*mb)
 
 	if exists(oldest) {
 		t.Error("oldest recording should be dropped first when over budget")
 	}
 	if !exists(mid) || !exists(newest) {
-		t.Error("the two newest recordings fit the 2 GB budget and must be kept")
+		t.Error("the two newest recordings fit the budget and must be kept")
 	}
 }
 
@@ -70,7 +73,7 @@ func TestPruneRecoveryZeroBoundDisablesOnlyThatAxis(t *testing.T) {
 	root := t.TempDir()
 	ancient := mkRecovery(t, root, "ancient", 1<<20, 400*24*time.Hour)
 
-	pruneRecovery(root, 0, 10<<30) // no age limit, generous size limit
+	pruneRecovery(root, 0, 10<<20) // no age limit, generous size limit
 	if !exists(ancient) {
 		t.Error("a zero age bound must not delete by age")
 	}
