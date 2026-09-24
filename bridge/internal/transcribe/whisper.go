@@ -22,10 +22,9 @@ const LanguageAuto = "auto"
 // kept when its loudness is at least relFactor of the speech level (a high
 // percentile, not the max, so a lone loud transient doesn't drop quiet speech)
 // AND above a small absolute floor (which catches the case where the user never
-// speaks, so there is no speech level to anchor the relative test). These drop
-// whisper's hallucinations over near-silence (~10x below real speech) without a
-// VAD pass — see the issue on mic timestamp drift. Tuned on a narrow sample;
-// adjust if real recordings lose quiet speech or keep noisy hallucinations.
+// speaks, so there is no speech level to anchor the relative test). When the
+// user speaks very little the filter may drop everything — dropSilent has a
+// safety net that preserves the loudest segments in that case.
 const (
 	silenceRelFactor = 0.15
 	silenceAbsFloor  = 350.0
@@ -192,12 +191,35 @@ func dropSilent(wavPath string, segs []seg) []seg {
 			kept = append(kept, s)
 		}
 	}
+	if len(kept) == 0 && len(segs) > 0 {
+		const safetyN = 3
+		type ranked struct {
+			idx int
+			rms float64
+		}
+		r := make([]ranked, len(segs))
+		for i := range segs {
+			r[i] = ranked{i, rms[i]}
+		}
+		sort.Slice(r, func(i, j int) bool { return r[i].rms > r[j].rms })
+		n := safetyN
+		if n > len(r) {
+			n = len(r)
+		}
+		for _, x := range r[:n] {
+			kept = append(kept, segs[x.idx])
+		}
+		sort.Slice(kept, func(i, j int) bool { return kept[i].start < kept[j].start })
+		log.Printf("transcribe: loudness filter dropped all %d mic segments — preserved %d loudest as safety net", len(segs), n)
+	}
 	return kept
 }
 
 // loudLevel returns the 90th-percentile RMS as the "speech loudness" reference,
 // so a single loud transient (cough, mic bump) doesn't inflate the threshold and
-// drop genuine quiet speech the way the raw maximum would.
+// drop genuine quiet speech the way the raw maximum would. When the user speaks
+// very little (<5% of the recording), this percentile falls into the noise band
+// and the filter may drop everything — the safety net in dropSilent catches that.
 func loudLevel(rms []float64) float64 {
 	if len(rms) == 0 {
 		return 0

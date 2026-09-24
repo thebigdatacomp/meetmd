@@ -560,6 +560,14 @@ func (m *Manager) transcribeRecording(ctx context.Context, cfg config.Config, re
 		micFailed = true
 		log.Printf("mic channel captured no audio (silent WAV), flagging the meeting")
 	}
+	for i := range channels {
+		if channels[i].voice && errs[i] == nil && len(results[i]) == 0 {
+			if rec.MicWav != "" && !micFailed && transcribe.HasAudio(rec.MicWav) {
+				micFailed = true
+				log.Printf("mic channel captured audio but produced zero segments after filtering — flagging meeting")
+			}
+		}
+	}
 
 	// The system channel carries the meeting, so measure the transcript against
 	// the audio it came from. Whisper reports success either way; only this ratio
